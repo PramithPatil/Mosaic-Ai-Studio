@@ -9,6 +9,10 @@ model_list:
     litellm_params:
       model: ollama_chat/llama-guard3:1b
       api_base: http://host.docker.internal:11434
+  - model_name: studio-image-guard
+    litellm_params:
+      model: ollama_chat/qwen2.5vl:3b
+      api_base: http://host.docker.internal:11434
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

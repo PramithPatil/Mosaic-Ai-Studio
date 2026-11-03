@@ -98,9 +98,51 @@ Remove-Variable gatewayKey
 
 The app sends requests to `/v1/chat/completions`. Input and output are checked by the configured guard alias; a missing verdict or a verdict beginning with `unsafe` withholds the response. LiteLLM aliases must exactly match the configured `model_name` values. For hosted providers, keep provider API keys in LiteLLM's configuration and continue to give the app only the LiteLLM key.
 
-The current API returns a clear unavailable response if a provider is missing. Image, audio, and video tabs are interface prototypes and do not call media services yet. `COMFYUI_BASE_URL`, `WHISPER_BASE_URL`, and `XTTS_BASE_URL` are reserved setup values, not connected integrations.
+## 5. Connect image, video, and audio services
 
-## 5. Install and run
+The media tabs now call server-side adapters. They need local services in addition to LiteLLM. Start with the modality you want to try; leave other service URLs blank until you have those services running.
+
+### Image and video with ComfyUI
+
+Install [ComfyUI Desktop](https://github.com/Comfy-Org/ComfyUI) and load a model/workflow that works in ComfyUI first. For each workflow, choose **Save (API Format)** and save its JSON under the project’s `workflows/` folder. The image workflow must output a PNG/JPEG/WebP image; the video workflow must output MP4/WebM/MOV (or GIF). Find the positive text prompt node ID in that API JSON.
+
+Set in `.env.local`:
+
+```dotenv
+COMFYUI_BASE_URL=http://localhost:8188
+COMFYUI_IMAGE_WORKFLOW_PATH=workflows/image.api.json
+COMFYUI_IMAGE_PROMPT_NODE_ID=the-image-prompt-node-id
+COMFYUI_VIDEO_WORKFLOW_PATH=workflows/video.api.json
+COMFYUI_VIDEO_PROMPT_NODE_ID=the-video-prompt-node-id
+COMFYUI_TIMEOUT_MS=180000
+LITELLM_IMAGE_GUARD_MODEL=studio-image-guard
+```
+
+Image results are withheld unless the configured vision model returns a clear `safe` verdict. The included LiteLLM config has a `studio-image-guard` alias for Ollama’s Qwen2.5-VL. Download it with `ollama pull qwen2.5vl:3b`, then restart LiteLLM so it loads the added alias. Video prompt safety is enabled, but sampled-frame video moderation is still future work.
+
+### Speech-to-text with Whisper
+
+The app expects an OpenAI-compatible `POST /v1/audio/transcriptions` endpoint. [Speaches](https://github.com/speaches-ai/speaches) provides one with faster-whisper and can run on CPU or CUDA. For a CPU demo, run:
+
+```cmd
+docker run --rm --name speaches -p 8000:8000 -v speaches-cache:/home/ubuntu/.cache/huggingface/hub ghcr.io/speaches-ai/speaches:latest-cpu
+```
+
+Set `WHISPER_BASE_URL=http://localhost:8000` and `WHISPER_MODEL=Systran/faster-whisper-small` in `.env.local`. The Audio tab’s **Transcribe audio** action accepts files up to 25 MB; the transcript is checked by the text guard before it appears.
+
+### Text-to-speech with XTTS
+
+Review and accept the [Coqui Public Model License](https://coqui.ai/cpml) before running its XTTS model. The official XTTS streaming server exposes the `/studio_speakers` and `/tts` endpoints used by this app. A CPU demo (slower than GPU) can run with:
+
+```cmd
+docker run --rm --name xtts -p 8002:80 -e COQUI_TOS_AGREED=1 ghcr.io/coqui-ai/xtts-streaming-server:latest-cpu
+```
+
+Only run this after agreeing to the model terms; the environment flag records that agreement. Set `XTTS_BASE_URL=http://localhost:8002` and optionally `XTTS_VOICE` to a speaker name returned by that server. The Audio tab’s **Create speech** action checks the input text before synthesis.
+
+After editing `.env.local`, restart the Next.js server. Keep each media service’s terminal/container running during use. Generated media is stored under `.data/media/` and served only to signed-in users. The `.data/` directory is ignored by Git.
+
+## 6. Install and run
 
 ```powershell
 npm.cmd install
@@ -117,17 +159,17 @@ npm.cmd run dev -- -p 3001
 
 Then open [http://localhost:3001](http://localhost:3001).
 
-## 6. Use the app
+## 7. Use the app
 
-1. Use the Text, Image, Audio, and Video tabs to switch workspaces. Only Text is connected to a provider.
+1. Use the Text, Image, Audio, and Video tabs. Image/video need ComfyUI workflows; Audio offers Whisper transcription and XTTS speech.
 2. Type a prompt, then choose **Save prompt** to add it to the prompt library. Loading a saved prompt and saving changes creates the next numbered version.
-3. Choose **Generate text** to invoke the configured LiteLLM and guard aliases. The result is labeled AI-generated after the output guard passes.
+3. Generate text through LiteLLM, images/video through ComfyUI, transcriptions through Whisper, or speech through XTTS. Successful media previews carry a visible AI-generated label.
 4. Sign out from the account control at the bottom of the navigation.
-5. Check the dashboard for locally recorded generation counts and latency. Spend remains blank until provider cost reporting is implemented.
+5. Check the dashboard for locally recorded generation counts and latency. Spend remains blank until a provider reports cost data.
 
 Saved prompts and safety-cleared generation metadata are stored in `.data/workspace.json`. This local JSON store is meant for a single-process demo. It is not suitable for concurrent, serverless, or production deployments. The prompt store seeds three example prompts on first use.
 
-## 7. Verify the project
+## 8. Verify the project
 
 ```powershell
 npm.cmd run lint
@@ -137,7 +179,7 @@ npm.cmd audit
 
 `lint` currently runs TypeScript type checking. Before presenting the project, also verify text generation with your own staging gateway using safe prompts, blocked prompts, guard timeouts, and output moderation. Record measured latency and cost only from provider responses.
 
-## 8. Production run
+## 9. Production run
 
 After configuring the environment and reviewing the limitations:
 

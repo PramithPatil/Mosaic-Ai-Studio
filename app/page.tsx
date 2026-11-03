@@ -4,9 +4,11 @@ import { FormEvent, useEffect, useState } from "react";
 import { AudioLines, BarChart3, BookOpen, Check, ChevronDown, CircleHelp, Clock3, FileAudio, Image as ImageIcon, LayoutDashboard, LockKeyhole, MessageSquareText, MoreHorizontal, PanelLeftClose, Plus, Search, Settings2, Shield, ShieldCheck, Sparkles, Video, WandSparkles, X } from "lucide-react";
 
 type Tool = "Text" | "Image" | "Audio" | "Video";
+type AudioAction = "transcribe" | "speak";
 type AuthState = { authenticated: boolean; configured: boolean; guardConfigured?: boolean; email?: string; workspaceId?: string };
 type PromptItem = { id: string; title: string; content: string; version: number; updatedAt: string };
 type ActivityItem = { id: string; title: string; modality: string; model: string; status: "complete"; costUsd: number | null; latencyMs: number; createdAt: string };
+type MediaResult = { url: string; mimeType: string; label: string };
 const navItems = [
   { name: "Overview", icon: LayoutDashboard },
   { name: "Text studio", icon: MessageSquareText, tool: "Text" as Tool },
@@ -15,10 +17,10 @@ const navItems = [
   { name: "Video studio", icon: Video, tool: "Video" as Tool },
 ];
 const tools: { name: Tool; icon: typeof MessageSquareText; detail: string; model: string; placeholder: string; button: string }[] = [
-  { name: "Text", icon: MessageSquareText, detail: "Write, reason, and refine", model: "Claude 3.5 Sonnet", placeholder: "Describe what you’d like to create…", button: "Generate text" },
-  { name: "Image", icon: ImageIcon, detail: "Turn ideas into visuals", model: "Flux 1.1 Pro", placeholder: "A sunlit reading nook with trailing plants, warm film grain…", button: "Generate image" },
-  { name: "Audio", icon: AudioLines, detail: "Transcribe or create speech", model: "Whisper · XTTS v2", placeholder: "Paste a script to create voice, or upload audio to transcribe…", button: "Generate audio" },
-  { name: "Video", icon: Video, detail: "Create a scene from a prompt", model: "Luma Dream Machine", placeholder: "Describe a short scene, camera movement, and mood…", button: "Generate video" },
+  { name: "Text", icon: MessageSquareText, detail: "Write, reason, and refine", model: "Ollama · Qwen 2.5 3B", placeholder: "Describe what you’d like to create…", button: "Generate text" },
+  { name: "Image", icon: ImageIcon, detail: "Generate and safety-check visuals", model: "ComfyUI workflow", placeholder: "A sunlit reading nook with trailing plants, warm film grain…", button: "Generate image" },
+  { name: "Audio", icon: AudioLines, detail: "Transcribe audio or create speech", model: "Whisper · XTTS v2", placeholder: "Write the words you want spoken…", button: "Create speech" },
+  { name: "Video", icon: Video, detail: "Create a scene from a prompt", model: "ComfyUI video workflow", placeholder: "Describe a short scene, camera movement, and mood…", button: "Generate video" },
 ];
 
 export default function Home() {
@@ -27,6 +29,10 @@ export default function Home() {
   const [active, setActive] = useState<Tool>("Text");
   const [prompt, setPrompt] = useState("");
   const [generatedText, setGeneratedText] = useState("");
+  const [generatedLabel, setGeneratedLabel] = useState("AI-GENERATED");
+  const [mediaResult, setMediaResult] = useState<MediaResult | null>(null);
+  const [audioAction, setAudioAction] = useState<AudioAction>("transcribe");
+  const [audioFile, setAudioFile] = useState<File | null>(null);
   const [notice, setNotice] = useState("");
   const [showLibrary, setShowLibrary] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -41,7 +47,7 @@ export default function Home() {
   const userName = auth?.email?.split("@")[0] ?? "Workspace member";
   const initials = auth?.email?.split("@")[0]?.slice(0, 2).toUpperCase() ?? "ME";
   const selected = tools.find((tool) => tool.name === active)!;
-  const selectTool = (tool: Tool) => { setActive(tool); setNotice(""); setGeneratedText(""); };
+  const selectTool = (tool: Tool) => { setActive(tool); setNotice(""); setGeneratedText(""); setGeneratedLabel("AI-GENERATED"); setMediaResult(null); setAudioFile(null); };
   const refreshWorkspace = async () => {
     const [promptResponse, activityResponse] = await Promise.all([fetch("/api/prompts"), fetch("/api/activity")]);
     if (promptResponse.ok) setPrompts((await promptResponse.json()).prompts);
@@ -74,16 +80,28 @@ export default function Home() {
     finally { setSavingPrompt(false); }
   };
   const generate = async () => {
-    if (!prompt.trim()) { setNotice("Add a prompt first, then your request will be checked before generation."); return; }
-    setGenerating(true); setNotice("Checking your prompt…"); setGeneratedText("");
+    const transcribing = active === "Audio" && audioAction === "transcribe";
+    if (transcribing && !audioFile) { setNotice("Choose an audio file to transcribe first."); return; }
+    if (!transcribing && !prompt.trim()) { setNotice("Add a prompt first, then your request will be checked before generation."); return; }
+    setGenerating(true); setNotice(transcribing ? "Transcribing and checking the transcript…" : "Checking your request…"); setGeneratedText(""); setMediaResult(null);
     try {
-      const response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modality: active.toLowerCase(), prompt }) });
+      let response: Response;
+      if (transcribing) {
+        const form = new FormData(); form.set("file", audioFile!);
+        response = await fetch("/api/media/transcribe", { method: "POST", body: form });
+      } else if (active === "Audio") {
+        response = await fetch("/api/media/speech", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text: prompt }) });
+      } else if (active === "Image" || active === "Video") {
+        response = await fetch("/api/media/render", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modality: active.toLowerCase(), prompt }) });
+      } else {
+        response = await fetch("/api/generate", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modality: "text", prompt }) });
+      }
       const data = await response.json();
-      if (response.status === 503) { setNotice("Demo mode: configure LiteLLM and the safety model in .env.local to generate for real."); return; }
       if (response.status === 401) { setAuth((current) => current ? { ...current, authenticated: false } : current); return; }
-      if (!response.ok) { setNotice(data.error ?? "Generation could not be completed."); return; }
-      setGeneratedText(data.text ?? "");
-      setNotice(`Safety checks passed · ${data.latencyMs} ms · Cost tracking will appear when the gateway provides cost data.`);
+      if (!response.ok) { setNotice(data.error ?? (response.status === 503 && active === "Text" ? "Configure LiteLLM and the safety model in .env.local to generate text." : "Generation could not be completed.")); return; }
+      if (data.text) { setGeneratedText(data.text); setGeneratedLabel(transcribing ? "TRANSCRIPT" : "AI-GENERATED"); }
+      if (data.url && data.mimeType) setMediaResult({ url: data.url, mimeType: data.mimeType, label: transcribing ? "TRANSCRIPT · SAFETY CHECK PASSED" : "AI-GENERATED · SAFETY CHECKS PASSED" });
+      setNotice(`Safety checks passed · ${data.latencyMs} ms · Cost tracking will appear when the provider reports cost data.`);
       await refreshWorkspace();
     } catch { setNotice("Could not reach the studio API. Check that the app server is running."); }
     finally { setGenerating(false); }
@@ -118,11 +136,13 @@ export default function Home() {
         <div className="studio-heading"><div><h2>Create something new</h2><p>One workspace. Every modality. Safety built in.</p></div><button className="text-button" onClick={() => setShowLibrary(true)}><BookOpen size={15}/> Browse prompts</button></div>
         <section className="studio-card"><div className="tool-tabs">{tools.map(({name,icon:Icon}) => <button key={name} className={`tool-tab ${active === name ? "active" : ""}`} onClick={() => selectTool(name)}><Icon size={16}/>{name}{name === "Audio" && <span className="soon">STT + TTS</span>}</button>)}</div>
           <div className="studio-body"><div className="model-row"><div className="model-picker"><span className="model-spark">✦</span><span>{selected.model}</span><ChevronDown size={14}/></div><span className="model-meta">{selected.detail}</span><button className="icon-button settings-icon" aria-label="Model settings"><Settings2 size={16}/></button></div>
-            <label className="prompt-label" htmlFor="prompt">YOUR PROMPT</label><textarea id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={selected.placeholder}/>
-            <div className="editor-footer"><div className="editor-hints"><span><LockKeyhole size={13}/> Private to your workspace</span><span className="hint-divider">·</span><span>{prompt.length} / 4,000</span></div><div className="editor-actions"><button className="save-prompt-button" onClick={saveCurrentPrompt} disabled={savingPrompt}><BookOpen size={14}/>{savingPrompt ? "Saving…" : "Save prompt"}</button><button className="generate-button" onClick={generate} disabled={generating}><WandSparkles size={16}/>{generating ? "Checking…" : selected.button}<span>→</span></button></div></div>
+            {active === "Audio" && <div className="audio-mode-switch" role="group" aria-label="Audio task"><button className={audioAction === "transcribe" ? "chosen" : ""} onClick={() => { setAudioAction("transcribe"); setNotice(""); setGeneratedText(""); setMediaResult(null); }}>Transcribe audio</button><button className={audioAction === "speak" ? "chosen" : ""} onClick={() => { setAudioAction("speak"); setNotice(""); setGeneratedText(""); setMediaResult(null); }}>Create speech</button></div>}
+            {active === "Audio" && audioAction === "transcribe" ? <div className="upload-field"><label className="prompt-label" htmlFor="audio-upload">AUDIO FILE · MAX 25 MB</label><input id="audio-upload" type="file" accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg" onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)}/>{audioFile && <span className="upload-filename">{audioFile.name} · {(audioFile.size / (1024 * 1024)).toFixed(1)} MB</span>}</div> : <><label className="prompt-label" htmlFor="prompt">{active === "Audio" ? "TEXT TO SPEAK" : active === "Image" ? "DESCRIBE YOUR IMAGE" : active === "Video" ? "DESCRIBE YOUR VIDEO" : "YOUR PROMPT"}</label><textarea id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={selected.placeholder}/></>}
+            <div className="editor-footer"><div className="editor-hints"><span><LockKeyhole size={13}/> Private to your workspace</span><span className="hint-divider">·</span><span>{prompt.length} / 4,000</span></div><div className="editor-actions">{active === "Text" && <button className="save-prompt-button" onClick={saveCurrentPrompt} disabled={savingPrompt}><BookOpen size={14}/>{savingPrompt ? "Saving…" : "Save prompt"}</button>}<button className="generate-button" onClick={generate} disabled={generating}><WandSparkles size={16}/>{generating ? "Working…" : active === "Audio" ? audioAction === "transcribe" ? "Transcribe audio" : "Create speech" : selected.button}<span>→</span></button></div></div>
             {saveMessage && <div className="save-message">{saveMessage}<button onClick={() => setSaveMessage("")} aria-label="Dismiss"><X size={13}/></button></div>}
             {notice && <div className="notice"><ShieldCheck size={15}/><span>{notice}</span><button aria-label="Dismiss" onClick={() => setNotice("")}><X size={14}/></button></div>}
-            {generatedText && <section className="generated-output"><div className="output-label"><span><Sparkles size={13}/> AI-GENERATED</span><span className="output-safety"><ShieldCheck size={13}/> Safety checks passed</span></div><p>{generatedText}</p></section>}
+            {generatedText && <section className="generated-output"><div className="output-label"><span><Sparkles size={13}/> {generatedLabel}</span><span className="output-safety"><ShieldCheck size={13}/> Safety checks passed</span></div><p>{generatedText}</p></section>}
+            {mediaResult && <section className="media-result"><div className="output-label"><span><Sparkles size={13}/>{mediaResult.label}</span><a href={mediaResult.url} download>Download</a></div>{mediaResult.mimeType.startsWith("image/") ? <img src={mediaResult.url} alt="AI-generated visual"/> : mediaResult.mimeType.startsWith("video/") ? <video src={mediaResult.url} controls/> : <audio src={mediaResult.url} controls/>}</section>}
             <div className="safety-strip"><div className="safety-icon"><Shield size={15}/></div><div><b>Mosaic Guard · {auth.guardConfigured ? "configured" : "not configured"}</b><span>{auth.guardConfigured ? "Input and output checks are required for text generation" : "Configure the LiteLLM guard model before generating"}</span></div><span className={`guard-status ${auth.guardConfigured ? "" : "demo-status"}`}>{auth.guardConfigured ? "READY" : "SETUP"}</span></div>
           </div>
         </section>

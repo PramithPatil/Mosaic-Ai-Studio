@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { currentSession } from "@/lib/session";
 import { recordGeneration } from "@/lib/store";
+import { moderateText } from "@/lib/moderation";
 
 export const runtime = "nodejs";
 const MAX_PROMPT_CHARS = 4_000;
@@ -20,10 +21,6 @@ async function completion(model: string, messages: { role: string; content: stri
   return response.json() as Promise<{ choices?: { message?: { content?: string } }[]; usage?: { prompt_tokens?: number; completion_tokens?: number } }>;
 }
 
-function isUnsafe(result: string | undefined) {
-  return /^\s*unsafe\b/i.test(result ?? "");
-}
-
 export async function POST(request: NextRequest) {
   const started = Date.now();
   const session = await currentSession();
@@ -40,34 +37,25 @@ export async function POST(request: NextRequest) {
   if (modality !== "text") return NextResponse.json({ error: `${modality} generation is not connected yet. See the setup guide for the next integration steps.` }, { status: 501 });
 
   const textModel = process.env.LITELLM_TEXT_MODEL;
-  const guardModel = process.env.LITELLM_GUARD_MODEL;
-  if (!textModel || !guardModel || !process.env.LITELLM_API_KEY) return NextResponse.json({ error: "provider_not_configured" }, { status: 503 });
+  if (!textModel || !process.env.LITELLM_GUARD_MODEL || !process.env.LITELLM_API_KEY) return NextResponse.json({ error: "provider_not_configured" }, { status: 503 });
   try {
-    const inputGuard = await completion(guardModel, [
-      { role: "system", content: "You are a content safety classifier. Determine if the user message requests assistance with harmful or disallowed content. Reply exactly 'safe' or 'unsafe' followed by a short category code." },
-      { role: "user", content: prompt },
-    ]);
-    const inputVerdict = inputGuard.choices?.[0]?.message?.content;
-    if (!inputVerdict) return NextResponse.json({ error: "The safety service returned no verdict. Please retry." }, { status: 502 });
-    if (isUnsafe(inputVerdict)) return NextResponse.json({ error: "This prompt was blocked by the input safety check." }, { status: 422 });
+    if (await moderateText(prompt, "input") !== "safe") return NextResponse.json({ error: "This prompt was blocked by the input safety check." }, { status: 422 });
 
     const generated = await completion(textModel, [{ role: "user", content: prompt }]);
     const text = generated.choices?.[0]?.message?.content;
     if (!text) return NextResponse.json({ error: "The model returned no text. Please retry." }, { status: 502 });
-    const outputGuard = await completion(guardModel, [
-      { role: "system", content: "You are a content safety classifier. Determine if the assistant response contains harmful or disallowed content. Reply exactly 'safe' or 'unsafe' followed by a short category code." },
-      { role: "user", content: text },
-    ]);
-    const outputVerdict = outputGuard.choices?.[0]?.message?.content;
-    if (!outputVerdict) return NextResponse.json({ error: "The output safety service returned no verdict; the response was withheld." }, { status: 502 });
-    if (isUnsafe(outputVerdict)) return NextResponse.json({ error: "The response was withheld by the output safety check." }, { status: 422 });
+    if (await moderateText(text, "output") !== "safe") return NextResponse.json({ error: "The response was withheld by the output safety check." }, { status: 422 });
 
     const latencyMs = Date.now() - started;
     await recordGeneration({ title: prompt.replace(/\s+/g, " ").slice(0, 60), modality, model: textModel, status: "complete", costUsd: null, latencyMs, usage: generated.usage ?? null, userEmail: session.email });
     return NextResponse.json({ text, latencyMs, safety: "passed", usage: generated.usage ?? null });
   } catch (error) {
     const message = error instanceof Error ? error.message : "unknown_error";
-    const status = message === "provider_not_configured" ? 503 : message.startsWith("provider_error_") ? 502 : 504;
-    return NextResponse.json({ error: status === 504 ? "The model gateway timed out. Please retry." : "The model gateway could not complete this request." }, { status });
+    const status = message === "provider_not_configured" || message === "text_safety_not_configured" ? 503
+      : message.startsWith("provider_error_") || message.startsWith("moderation_provider_error_") || message === "moderation_verdict_missing" ? 502 : 504;
+    const responseError = status === 504 ? "The model gateway timed out. Please retry."
+      : status === 503 ? "The text model or safety model is not configured."
+      : "The model gateway or safety service could not complete this request.";
+    return NextResponse.json({ error: responseError }, { status });
   }
 }
