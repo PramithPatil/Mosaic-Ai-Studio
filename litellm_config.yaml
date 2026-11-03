@@ -1,0 +1,14 @@
+# Local demo models served by Ollama on the Windows host.
+# The model_name values are the aliases the Mosaic app sends to LiteLLM.
+model_list:
+  - model_name: studio-text
+    litellm_params:
+      model: ollama_chat/qwen2.5:3b
+      api_base: http://host.docker.internal:11434
+  - model_name: studio-guard
+    litellm_params:
+      model: ollama_chat/llama-guard3:1b
+      api_base: http://host.docker.internal:11434
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
