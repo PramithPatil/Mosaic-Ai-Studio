@@ -9,6 +9,9 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
+    "@langfuse/otel": "^6.1.1",
+    "@langfuse/tracing": "^6.1.1",
+    "@opentelemetry/sdk-node": "^0.200.0",
     "lucide-react": "^0.468.0",
     "next": "^15.1.0",
     "react": "^19.0.0",

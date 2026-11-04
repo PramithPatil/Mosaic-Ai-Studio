@@ -46,13 +46,19 @@ flowchart TD
   IMGSAFE --> AUDIT
   XTTS --> AUDIT
   VIDEO --> AUDIT
-  AUDIT --> LANGFUSE[Langfuse traces and cost analytics]
+  AUDIT --> LANGFUSE[Optional Langfuse traces · provider-reported cost]
   AUDIT --> DB[(Workspace database)]
   DB --> PROMPTS[Versioned prompt library]
   DB --> DASH[Usage and governance dashboard]
 ```
 
 The app includes adapters for these media paths, but each returns an actionable setup message until its local service and workflow are configured. Image output requires a vision-capable LiteLLM alias. Video output currently checks the text prompt but does not run sampled-frame moderation.
+
+## Langfuse observability
+
+Langfuse is initialized by the Next.js Node runtime only when both `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set and `LANGFUSE_TRACING_ENABLED` is not `false`. Set `LANGFUSE_BASE_URL` to the Langfuse Cloud region or self-hosted endpoint. `LANGFUSE_HOST` remains accepted as a legacy fallback. The trace records operation, modality, configured model/provider, quality preset, outcome, and token usage when the gateway reports it. User and workspace identifiers are one-way hashed before propagation. Prompt text, transcripts, generated text, filenames, and media bytes are not sent. Provider-reported cost is not synthesized; local providers commonly return no cost.
+
+If Langfuse initialization fails, the app logs the issue server-side and continues generation without tracing. Rotate keys from the Langfuse project settings and keep them only in `.env.local` or the deployment's secret manager.
 
 ## API contract
 
@@ -71,4 +77,4 @@ The app includes adapters for these media paths, but each returns an actionable 
 - `POST /api/media/speech`: accepts `{text, voice?}` and sends text to the Coqui XTTS `/studio_speakers` and `/tts` endpoints after input moderation.
 - `GET /api/media/{id}`: serves authenticated generated media from `.data/media/` with `X-AI-Generated: true`.
 
-Prompt text and versions plus generation metadata are persisted locally. Traces and costs are not yet captured. Do not use the current dashboard for billing or operational reporting.
+Prompt text and versions plus generation metadata are persisted locally. With Langfuse configured, server-side provider-operation traces include operational metadata and reported token usage, but exclude prompt and output content. The local dashboard remains the source of local activity history; costs are available only when a provider returns them. Do not use the local dashboard for billing or operational reporting.

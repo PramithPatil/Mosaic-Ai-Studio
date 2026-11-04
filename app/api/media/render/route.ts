@@ -4,6 +4,7 @@ import { recordGeneration } from "@/lib/store";
 import { moderateImage, moderateText } from "@/lib/moderation";
 import { runComfyWorkflow } from "@/lib/comfy";
 import { saveMedia } from "@/lib/media-store";
+import { withStudioTrace } from "@/lib/langfuse";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -26,7 +27,12 @@ export async function POST(request: NextRequest) {
     if (await moderateText(prompt, "input") !== "safe") return NextResponse.json({ error: "This prompt was blocked by the input safety check." }, { status: 422 });
     phase = "comfy_generation";
     const quality = body.imageQuality === "fast" || body.imageQuality === "balanced" ? body.imageQuality : "quality";
-    const generated = await runComfyWorkflow(modality, prompt, quality);
+    const generated = await withStudioTrace({ name: modality === "image" ? "generate-image" : "generate-video", userEmail: session.email, metadata: { modality, provider: "comfyui", quality } }, async (trace) => {
+      const generation = trace?.generation(modality === "image" ? "Stable Diffusion 1.5" : "ComfyUI video workflow");
+      try { const result = await runComfyWorkflow(modality, prompt, quality); trace?.update({ providerresult: "received" }); return result; }
+      catch (error) { generation?.update({ level: "ERROR", statusMessage: "Media provider request failed" }); trace?.update({ providerresult: "error" }); throw error; }
+      finally { generation?.end(); }
+    });
     phase = "image_safety";
     if (modality === "image" && await moderateImage(generated.bytes, generated.mimeType) !== "safe") {
       return NextResponse.json({ error: "The generated image was withheld by the image safety check." }, { status: 422 });

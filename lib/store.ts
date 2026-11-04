@@ -96,7 +96,7 @@ export async function recordGeneration(record: Omit<GenerationRecord, "id" | "cr
 export async function listActivity(userEmail: string) {
   await pendingWrite;
   const data = await load();
-  return data.activity.filter((record) => record.userEmail === userEmail).slice(0, 100);
+  return data.activity.filter((record) => record.userEmail === userEmail).slice(0, 500);
 }
 
 export async function renameActivity(userEmail: string, id: string, title: string) {

@@ -23,12 +23,12 @@ function verdict(value: string | undefined) {
 export async function moderateText(text: string, kind: "input" | "output" | "transcript") {
   const model = process.env.LITELLM_GUARD_MODEL;
   if (!model) throw new Error("text_safety_not_configured");
-  const subject = kind === "input" ? "user request" : kind === "transcript" ? "speech transcript" : "assistant response";
-  const instruction = `Classify the ${subject} against these safety categories: violent crime, non-violent crime, sex-related crime, child sexual exploitation, defamation, dangerous specialized advice, sensitive personal data, intellectual-property infringement, indiscriminate weapons, hate, self-harm, sexual content, and election misinformation. Reply with exactly 'safe' or 'unsafe' followed by a category code. Judge the text itself: ordinary conversation, neutral transcripts, and benign mentions or quotations are safe; mark unsafe only when the text meaningfully enables, encourages, or endorses harmful conduct or otherwise clearly violates a category.`;
-  const result = await completion(model, [
-    { role: "system", content: `You are a content safety classifier. ${instruction}` },
-    { role: "user", content: text },
-  ]);
+  // Ollama's llama-guard3 template supplies its own policy and verdict instructions.
+  // Passing a custom system message makes that text appear as an Agent turn in its
+  // classification conversation, which can cause the policy description itself to
+  // be classified as unsafe. Give the native template only the content to assess.
+  void kind;
+  const result = await completion(model, [{ role: "user", content: text }]);
   return verdict(result.choices?.[0]?.message?.content);
 }
 

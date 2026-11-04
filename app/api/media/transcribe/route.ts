@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentSession } from "@/lib/session";
 import { recordGeneration } from "@/lib/store";
 import { moderateText } from "@/lib/moderation";
+import { withStudioTrace } from "@/lib/langfuse";
 
 export const runtime = "nodejs";
 export const maxDuration = 420;
@@ -25,11 +26,19 @@ export async function POST(request: NextRequest) {
   const started = Date.now();
   let phase = "whisper_transcription";
   try {
-    const response = await fetch(`${base.replace(/\/$/, "")}/v1/audio/transcriptions`, {
+    const response = await withStudioTrace({ name: "transcribe-audio", userEmail: session.email, metadata: { modality: "audio", provider: "whisper" } }, async (trace) => {
+      const generation = trace?.generation(process.env.WHISPER_MODEL?.trim() || "Whisper");
+      try {
+        const result = await fetch(`${base.replace(/\/$/, "")}/v1/audio/transcriptions`, {
       method: "POST",
       headers: process.env.WHISPER_API_KEY ? { Authorization: `Bearer ${process.env.WHISPER_API_KEY}` } : undefined,
       body: upstream,
       signal: AbortSignal.timeout(360_000),
+        });
+        trace?.update({ providerresult: result.ok ? "received" : "error" });
+        return result;
+      } catch (error) { generation?.update({ level: "ERROR", statusMessage: "Transcription provider request failed" }); trace?.update({ providerresult: "error" }); throw error; }
+      finally { generation?.end(); }
     });
     if (!response.ok) throw new Error(`whisper_error_${response.status}`);
     const data = await response.json() as { text?: string };

@@ -109,6 +109,19 @@ XTTS_LANGUAGE=en
 
 The project includes `litellm_config.yaml` with aliases for Qwen text, Llama Guard, and Qwen vision. Restart the Node app after changing `.env.local`.
 
+### Optional — connect Langfuse observability
+
+Create or open a Langfuse project, then copy its public and secret API keys into the server-side `.env.local`. Keep both keys private and out of GitHub. Use the base URL for your Langfuse region; the example below is the EU Cloud endpoint. The app sends operational traces (provider/model, modality, latency, reported token usage, and outcomes) but does not send prompts, transcripts, generated text, filenames, or media bytes. Langfuse is optional; leave the keys blank to disable it.
+
+```dotenv
+LANGFUSE_PUBLIC_KEY=pk-lf-your-project-public-key
+LANGFUSE_SECRET_KEY=sk-lf-your-project-secret-key
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_TRACING_ENABLED=true
+```
+
+After adding keys, restart the Next.js app. Open Profile and settings to see whether Langfuse is configured. Generate text or media, then view Traces in the same Langfuse project. Cost is recorded only when the provider reports it; local Ollama and ComfyUI runs normally report none.
+
 ## 5. Start the whole app for daily use
 
 Start only the services you need, or use all six CMD windows for the full local demo. First startup may download container images or models. Keep each foreground window open while using its feature.
@@ -196,6 +209,8 @@ There is no separate CMD command for each generation. Use the matching tab in Mo
 - **Transcription:** Audio tab → **Transcribe audio** → choose a WAV, MP3, M4A, or other accepted audio file → **Transcribe audio**. Requires Speaches and LiteLLM for transcript safety. To transcribe speech you just created, use its **Download** link first, then select that file.
 - **Speech creation:** Audio tab → **Create speech** → type text → **Create speech**. Requires XTTS and LiteLLM for input safety.
 - **Video:** Not configured in this local setup. It needs a compatible video model plus a `video.api.json` ComfyUI workflow and prompt node ID.
+
+Langfuse only receives traces when valid project keys are configured. It does not replace local history or provide fabricated dollar costs.
 
 Generated media is stored in `.data/media/`. The dashboard records local usage and latency. Local providers do not report a dollar cost, so cost can remain blank.
 

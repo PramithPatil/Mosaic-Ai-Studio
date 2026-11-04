@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { currentSession } from "@/lib/session";
 import { recordGeneration } from "@/lib/store";
 import { moderateText } from "@/lib/moderation";
+import { withStudioTrace } from "@/lib/langfuse";
 
 export const runtime = "nodejs";
 const MAX_PROMPT_CHARS = 4_000;
@@ -41,7 +42,19 @@ export async function POST(request: NextRequest) {
   try {
     if (await moderateText(prompt, "input") !== "safe") return NextResponse.json({ error: "This prompt was blocked by the input safety check." }, { status: 422 });
 
-    const generated = await completion(textModel, [{ role: "user", content: prompt }]);
+    const generated = await withStudioTrace({ name: "generate-text", userEmail: session.email, metadata: { modality: "text", provider: "litellm" } }, async (trace) => {
+      const generation = trace?.generation(textModel);
+      try {
+        const result = await completion(textModel, [{ role: "user", content: prompt }]);
+        if (result.usage) generation?.update({ usageDetails: { input: result.usage.prompt_tokens ?? 0, output: result.usage.completion_tokens ?? 0, total: (result.usage.prompt_tokens ?? 0) + (result.usage.completion_tokens ?? 0) } });
+        trace?.update({ providerresult: "received" });
+        return result;
+      } catch (error) {
+        generation?.update({ level: "ERROR", statusMessage: "Text provider request failed" });
+        trace?.update({ providerresult: "error" });
+        throw error;
+      } finally { generation?.end(); }
+    });
     const text = generated.choices?.[0]?.message?.content;
     if (!text) return NextResponse.json({ error: "The model returned no text. Please retry." }, { status: 502 });
     if (await moderateText(text, "output") !== "safe") return NextResponse.json({ error: "The response was withheld by the output safety check." }, { status: 422 });

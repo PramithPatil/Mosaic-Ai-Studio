@@ -28,7 +28,7 @@ function artifactsFromHistory(entry: { outputs?: Record<string, Record<string, u
   return artifacts;
 }
 
-export async function runComfyWorkflow(kind: "image" | "video", text: string, imageQuality: "fast" | "quality" = "quality") {
+export async function runComfyWorkflow(kind: "image" | "video", text: string, imageQuality: "fast" | "balanced" | "quality" = "quality") {
   const base = process.env.COMFYUI_BASE_URL?.trim();
   const workflowPath = process.env[kind === "image" ? "COMFYUI_IMAGE_WORKFLOW_PATH" : "COMFYUI_VIDEO_WORKFLOW_PATH"]?.trim();
   const promptNodeId = process.env[kind === "image" ? "COMFYUI_IMAGE_PROMPT_NODE_ID" : "COMFYUI_VIDEO_PROMPT_NODE_ID"]?.trim();

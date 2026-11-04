@@ -3,6 +3,7 @@ import { currentSession } from "@/lib/session";
 import { recordGeneration } from "@/lib/store";
 import { moderateText } from "@/lib/moderation";
 import { saveMedia } from "@/lib/media-store";
+import { withStudioTrace } from "@/lib/langfuse";
 
 export const runtime = "nodejs";
 export const maxDuration = 360;
@@ -30,10 +31,18 @@ export async function POST(request: NextRequest) {
     const speaker = voice ? speakers[voice] : undefined;
     if (!speaker?.speaker_embedding || !speaker.gpt_cond_latent) throw new Error("xtts_voice_unavailable");
     phase = "speech_synthesis";
-    const response = await fetch(`${base.replace(/\/$/, "")}/tts`, {
+    const response = await withStudioTrace({ name: "synthesize-speech", userEmail: session.email, metadata: { modality: "audio", provider: "xtts" } }, async (trace) => {
+      const generation = trace?.generation("XTTS v2");
+      try {
+        const result = await fetch(`${base.replace(/\/$/, "")}/tts`, {
       method: "POST", headers: { "Content-Type": "application/json", ...(process.env.XTTS_API_KEY ? { Authorization: `Bearer ${process.env.XTTS_API_KEY}` } : {}) },
       body: JSON.stringify({ text, language: body.language?.trim() || process.env.XTTS_LANGUAGE?.trim() || "en", speaker_embedding: speaker.speaker_embedding, gpt_cond_latent: speaker.gpt_cond_latent }),
       signal: AbortSignal.timeout(300_000),
+        });
+        trace?.update({ providerresult: result.ok ? "received" : "error" });
+        return result;
+      } catch (error) { generation?.update({ level: "ERROR", statusMessage: "Speech provider request failed" }); trace?.update({ providerresult: "error" }); throw error; }
+      finally { generation?.end(); }
     });
     if (!response.ok) throw new Error(`xtts_error_${response.status}`);
     const encoded = await response.json() as string;

@@ -1,17 +1,19 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { AudioLines, BarChart3, BookOpen, Check, ChevronDown, CircleHelp, Clock3, FileAudio, Image as ImageIcon, LayoutDashboard, LockKeyhole, Menu, MessageSquareText, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Shield, ShieldCheck, Video, WandSparkles, X, ArrowUpRight } from "lucide-react";
+import { AudioLines, BarChart3, BookOpen, Boxes, Check, ChevronDown, CircleHelp, Clock3, Code2, Database, FileAudio, Image as ImageIcon, LayoutDashboard, LockKeyhole, Menu, MessageSquareText, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Plus, Puzzle, Search, Settings2, Shield, ShieldCheck, Video, WandSparkles, X, ArrowUpRight } from "lucide-react";
 
 type Tool = "Text" | "Image" | "Audio" | "Video";
 type AudioAction = "transcribe" | "speak";
 type ImageQuality = "fast" | "balanced" | "quality";
-type DialogState = { kind: "settings" | "help" | "safety" | "model" } | { kind: "activity" | "renameActivity" | "deleteActivity"; item: ActivityItem } | null;
+type DialogState = { kind: "settings" | "help" | "safety" | "model" | "stack" } | { kind: "activity" | "renameActivity" | "deleteActivity"; item: ActivityItem } | null;
 type ActivityRange = "all" | "7" | "30";
-type AuthState = { authenticated: boolean; configured: boolean; guardConfigured?: boolean; email?: string; workspaceId?: string };
+type AuthState = { authenticated: boolean; configured: boolean; guardConfigured?: boolean; langfuseConfigured?: boolean; email?: string; workspaceId?: string };
 type PromptItem = { id: string; title: string; content: string; version: number; updatedAt: string };
 type ActivityItem = { id: string; title: string; modality: string; model: string; status: "complete"; costUsd: number | null; latencyMs: number; createdAt: string };
 type MediaResult = { url: string; mimeType: string; label: string; latencyMs: number | null };
+
+const LANGFUSE_TRACES_URL = "https://cloud.langfuse.com/project/cmw248js800fead0ji2tguyq0/traces";
 
 const tools: { name: Tool; icon: typeof MessageSquareText; detail: string; model: string; placeholder: string; button: string }[] = [
   { name: "Text", icon: MessageSquareText, detail: "Write, reason, and refine", model: "Ollama · Qwen 2.5 3B", placeholder: "Describe what you would like to create…", button: "Generate text" },
@@ -24,6 +26,7 @@ const serviceInfo = [
   { name: "Image generation", address: "ComfyUI · localhost:8188" },
   { name: "Audio transcription", address: "Speaches · localhost:8000" },
   { name: "Speech generation", address: "XTTS · localhost:8002" },
+  { name: "Observability", address: "Langfuse · server-side traces" },
 ];
 
 function formatDuration(ms: number) {
@@ -37,6 +40,8 @@ export default function Home() {
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [profileName, setProfileName] = useState("");
+  const [timeGreeting, setTimeGreeting] = useState("Welcome");
+  const [greetingIndex, setGreetingIndex] = useState(0);
   const [active, setActive] = useState<Tool>("Text");
   const [activeSection, setActiveSection] = useState<"overview" | "studio">("overview");
   const [imageQuality, setImageQuality] = useState<ImageQuality>("quality");
@@ -55,7 +60,6 @@ export default function Home() {
   const [saveMessage, setSaveMessage] = useState("");
   const [collapsed, setCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [showLibrary, setShowLibrary] = useState(false);
   const [libraryFilter, setLibraryFilter] = useState("");
@@ -72,7 +76,6 @@ export default function Home() {
   const userName = auth?.email?.split("@")[0] ?? "Workspace member";
   const visibleProfileName = profileName || userName;
   const initials = visibleProfileName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "ME";
-  const workspaceInitial = auth?.workspaceId?.slice(0, 1).toUpperCase() ?? "W";
   const selected = tools.find((tool) => tool.name === active)!;
   const filteredActivity = activity.filter((item) => {
     if (activityRange === "all") return true;
@@ -101,7 +104,6 @@ export default function Home() {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setShowSearch(true);
-        setWorkspaceMenuOpen(false);
         setProfileMenuOpen(false);
       }
       if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "n") {
@@ -109,13 +111,24 @@ export default function Home() {
         newGeneration();
       }
       if (event.key === "Escape") {
-        setDialog(null); setShowSearch(false); setShowLibrary(false); setWorkspaceMenuOpen(false); setProfileMenuOpen(false); setMobileNavOpen(false);
+        setDialog(null); setShowSearch(false); setShowLibrary(false); setProfileMenuOpen(false); setMobileNavOpen(false);
       }
     };
     window.addEventListener("keydown", handleKeys);
     return () => window.removeEventListener("keydown", handleKeys);
   }, []);
   useEffect(() => { if (showSearch) searchInputRef.current?.focus(); }, [showSearch]);
+  useEffect(() => {
+    const updateGreeting = () => {
+      const hour = new Date().getHours();
+      setTimeGreeting(hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening");
+    };
+    updateGreeting();
+    const greetingTimer = window.setInterval(() => setGreetingIndex((index) => index + 1), 8500);
+    const clockTimer = window.setInterval(updateGreeting, 60_000);
+    return () => { window.clearInterval(greetingTimer); window.clearInterval(clockTimer); };
+  }, []);
+  useEffect(() => { setGreetingIndex(0); }, [timeGreeting]);
 
   const selectTool = (tool: Tool) => {
     setActive(tool); setActiveSection("studio"); setNotice(""); setGeneratedText(""); setGeneratedLabel("GENERATED OUTPUT"); setMediaResult(null); setAudioFile(null); setMobileNavOpen(false);
@@ -213,28 +226,32 @@ export default function Home() {
   const matchingTools = tools.filter((item) => item.name.toLowerCase().includes(searchQuery.toLowerCase()) || item.detail.toLowerCase().includes(searchQuery.toLowerCase()));
   const matchingPrompts = prompts.filter((item) => `${item.title} ${item.content}`.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 4);
   const matchingActivity = activity.filter((item) => `${item.title} ${item.modality}`.toLowerCase().includes(searchQuery.toLowerCase())).slice(0, 4);
+  const greetings: React.ReactNode[] = [
+    <><span>{timeGreeting},</span> <em>{visibleProfileName}</em></>,
+    <>Ready to create, <em>{visibleProfileName}</em>?</>,
+    <>What are we making, <em>{visibleProfileName}</em>?</>,
+    <>Good to have you here, <em>{visibleProfileName}</em>.</>,
+  ];
 
   return <main className={`app-shell ${collapsed ? "is-collapsed" : ""} ${mobileNavOpen ? "mobile-nav-open" : ""}`}>
     <aside className="sidebar">
       <div className="brand-row">
-        <button className="brand-lockup" onClick={goOverview} aria-label="Mosaic Studio overview"><span className="brand-kicker">LOCAL WORKSPACE</span><span className="brand-name">MOSAIC</span></button>
+        <button className="brand-lockup" onClick={newGeneration} aria-label="Start a new generation" title="Start a new generation"><span className="brand-kicker">LOCAL WORKSPACE</span><span className="brand-name">MOSAIC</span></button>
         <button className="icon-button sidebar-collapse" onClick={() => setCollapsed(!collapsed)} aria-label={collapsed ? "Expand navigation" : "Collapse navigation"} title={collapsed ? "Expand navigation" : "Collapse navigation"}>{collapsed ? <PanelLeftOpen size={17}/> : <PanelLeftClose size={17}/>}</button>
       </div>
-      <div className="workspace-wrap">
-        <button className="workspace-switcher" onClick={() => setWorkspaceMenuOpen(!workspaceMenuOpen)} aria-label="Open workspace menu" aria-expanded={workspaceMenuOpen} title="Workspace menu"><span className="workspace-monogram">{workspaceInitial}</span><span className="workspace-copy"><b>{auth.workspaceId ?? "Workspace"}</b><small>Private workspace</small></span><ChevronDown size={15}/></button>
-        {workspaceMenuOpen && <div className="anchored-menu workspace-menu"><div className="menu-eyebrow">SIGNED IN</div><b>{auth.email}</b><span>{auth.workspaceId ?? "Workspace"}</span><button onClick={() => { setDialog({ kind: "settings" }); setWorkspaceMenuOpen(false); }}><Settings2 size={14}/> Workspace settings</button></div>}
-      </div>
-      <button className="new-project" onClick={newGeneration} title="Start a new generation" aria-label="Start a new generation"><Plus size={16}/><span>New generation</span><kbd>Ctrl ⇧ N</kbd></button>
-      <div className="nav-label">WORKSPACE</div>
+      <button title="Search workspace" aria-label="Search workspace" className="nav-link sidebar-tool-link sidebar-search-link" onClick={() => setShowSearch(true)}><span className="nav-icon-box"><Search size={16}/></span><span className="nav-text">Search</span><kbd className="sidebar-shortcut">Ctrl K</kbd></button>
+      <div className="nav-label">YOUR STUDIO</div>
       <nav className="primary-nav" aria-label="Workspace navigation">
-        <button onClick={goOverview} title="Overview" aria-label="Overview" className={`nav-link ${activeSection === "overview" ? "selected" : ""}`}><LayoutDashboard size={17}/><span>Overview</span></button>
-        {tools.map(({ name, icon: Icon }) => <button key={name} title={`${name} studio`} aria-label={`${name} studio`} onClick={() => selectTool(name)} className={`nav-link ${activeSection === "studio" && name === active ? "selected" : ""}`}><Icon size={17}/><span>{name} studio</span></button>)}
+        <button onClick={goOverview} title="Overview" aria-label="Overview" className={`nav-link sidebar-tool-link ${activeSection === "overview" ? "selected" : ""}`}><span className="nav-icon-box"><LayoutDashboard size={16}/></span><span className="nav-text">Overview</span></button>
+        {tools.map(({ name, icon: Icon }) => <button key={name} title={`${name} studio`} aria-label={`${name} studio`} onClick={() => selectTool(name)} className={`nav-link sidebar-tool-link ${activeSection === "studio" && name === active ? "selected" : ""}`}><span className="nav-icon-box"><Icon size={16}/></span><span className="nav-text">{name}</span></button>)}
       </nav>
-      <button title="Prompt library" aria-label={`Prompt library, ${prompts.length} saved`} className={`nav-link library-link ${showLibrary ? "selected" : ""}`} onClick={() => { setShowLibrary(true); setLibraryFilter(""); }}><BookOpen size={17}/><span>Prompt library</span><span className="nav-count">{prompts.length}</span></button>
+      <div className="nav-label library-nav-label">LIBRARY</div>
+      <button title="Prompt library" aria-label={`Prompt library, ${prompts.length} saved`} className={`nav-link sidebar-tool-link ${showLibrary ? "selected" : ""}`} onClick={() => { setShowLibrary(true); setLibraryFilter(""); }}><span className="nav-icon-box"><BookOpen size={16}/></span><span className="nav-text">Prompt library</span><span className="nav-count">{prompts.length}</span></button>
       <div className="sidebar-spacer"/>
-      <div className="nav-label">GOVERNANCE</div>
-      <button className="nav-link" title="Safety center" aria-label="Safety center" onClick={() => setDialog({ kind: "safety" })}><ShieldCheck size={17}/><span>Safety center</span><span className="status-pip"/></button>
-      <button className="nav-link" title="Settings" aria-label="Settings" onClick={() => setDialog({ kind: "settings" })}><Settings2 size={17}/><span>Settings</span></button>
+      <div className="nav-label">WORKSPACE</div>
+      <button className="nav-link sidebar-tool-link" title="Safety center" aria-label="Safety center" onClick={() => setDialog({ kind: "safety" })}><span className="nav-icon-box"><ShieldCheck size={16}/></span><span className="nav-text">Safety center</span><span className="status-pip"/></button>
+      <button className="nav-link sidebar-tool-link" title="Technology stack" aria-label="Technology stack" onClick={() => setDialog({ kind: "stack" })}><span className="nav-icon-box"><Puzzle size={16}/></span><span className="nav-text">Tech stack</span></button>
+      <button className="nav-link sidebar-tool-link" title="Settings" aria-label="Settings" onClick={() => setDialog({ kind: "settings" })}><span className="nav-icon-box"><Settings2 size={16}/></span><span className="nav-text">Settings</span></button>
       <div className="sidebar-bottom">
         <div className="usage-card"><div className="usage-heading"><span>Workspace activity</span><button className="tiny-info" onClick={() => setDialog({ kind: "help" })} aria-label="About workspace activity"><CircleHelp size={14}/></button></div><div className="usage-amount">{activity.length}<span> saved generations</span></div><div className="usage-caption">{spendKnown ? `Tracked model costs: $${totalSpend.toFixed(2)}` : "Local providers do not report cost"}</div></div>
         <div className="profile-wrap">
@@ -247,23 +264,13 @@ export default function Home() {
     {mobileNavOpen && <button className="mobile-nav-backdrop" aria-label="Close navigation" onClick={() => setMobileNavOpen(false)}/>}
     <section className="main-area">
       <header className="topbar">
-        <div className="topbar-leading"><button className="icon-button mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={19}/></button><div className="breadcrumb"><span>Workspace</span><span className="breadcrumb-divider">/</span><b>{activeSection === "overview" ? "Overview" : `${active} studio`}</b></div></div>
-        <div className="top-actions"><span className="environment"><i/> Local workspace</span><button className="search-button" onClick={() => setShowSearch(true)} aria-label="Search workspace (Ctrl K)" title="Search workspace"><Search size={15}/><span>Search</span><kbd>Ctrl K</kbd></button><button className="icon-button top-icon-button" aria-label="Help and shortcuts" title="Help" onClick={() => setDialog({ kind: "help" })}><CircleHelp size={17}/></button><button className="top-avatar" onClick={() => setDialog({ kind: "settings" })} aria-label="Open profile settings" title="Profile settings">{initials}</button></div>
+        <div className="topbar-leading"><button className="icon-button mobile-menu-button" onClick={() => setMobileNavOpen(true)} aria-label="Open navigation"><Menu size={19}/></button><div className="topbar-context"><span className="topbar-title">{activeSection === "overview" ? "Workspace" : `${active} studio`}</span></div></div>
+        <div className="top-actions"><button className="icon-button top-icon-button" onClick={() => setShowSearch(true)} aria-label="Search workspace (Ctrl K)" title="Search workspace"><Search size={17}/></button><button className="icon-button top-icon-button" aria-label="Help and shortcuts" title="Help" onClick={() => setDialog({ kind: "help" })}><CircleHelp size={17}/></button><button className="top-avatar" onClick={() => setDialog({ kind: "settings" })} aria-label="Open profile settings" title="Profile settings">{initials}</button></div>
       </header>
 
       <div className="content">
-        <section className="overview-section" id="overview">
-          <div className="overview-heading"><div><div className="eyebrow"><span className="live-indicator"/> PRIVATE CREATIVE WORKSPACE</div><h1>Your studio, at a glance.</h1><p>Generate, review, and manage work across your local models.</p></div><button className="primary-button" onClick={newGeneration}><Plus size={16}/> New generation</button></div>
-          <div className="metrics-grid">
-            <Metric label="Generations" value={String(activity.length)} change="Saved" icon={<BarChart3 size={17}/>} note="In this workspace"/>
-            <Metric label="Tracked spend" value={spendKnown ? `$${totalSpend.toFixed(2)}` : "—"} change={spendKnown ? "Reported" : "Local"} icon={<LockKeyhole size={17}/>} note={spendKnown ? "Reported by provider" : "No provider cost data"}/>
-            <Metric label="Average latency" value={averageLatency === null ? "—" : `${(averageLatency / 1000).toFixed(1)}s`} change={activity.length ? "Tracked" : "Pending"} icon={<Clock3 size={17}/>} note="Across saved generations"/>
-            <Metric label="Safety checks" value={activity.length ? "Active" : "Ready"} change={auth.guardConfigured ? "Configured" : "Setup needed"} icon={<ShieldCheck size={17}/>} note="Requests checked before display"/>
-          </div>
-        </section>
-
         <section className="studio-section" id="studio">
-          <div className="section-heading"><div><div className="eyebrow">CREATE</div><h2>Make something new</h2><p>Choose a modality, shape the prompt, and generate.</p></div><button className="quiet-button" onClick={() => { setShowLibrary(true); setLibraryFilter(""); }}><BookOpen size={15}/> Prompt library</button></div>
+          <div className="section-heading"><div><div className="eyebrow">CREATE</div><h2 key={greetingIndex} className="greeting-title" aria-live="polite">{greetings[greetingIndex % greetings.length]}</h2><p>Choose a modality, shape the prompt, and generate.</p></div><button className="quiet-button" onClick={() => { setShowLibrary(true); setLibraryFilter(""); }}><BookOpen size={15}/> Prompt library</button></div>
           <section className="studio-card">
             <div className="tool-tabs" role="tablist" aria-label="Generation type">{tools.map(({ name, icon: Icon }) => <button key={name} role="tab" aria-selected={active === name} className={`tool-tab ${active === name ? "active" : ""}`} onClick={() => selectTool(name)}><Icon size={16}/><span>{name}</span></button>)}</div>
             <div className="studio-body">
@@ -281,8 +288,18 @@ export default function Home() {
           </section>
         </section>
 
-        <section className="lower-grid"><section className="activity-card"><div className="section-heading compact"><div><div className="eyebrow">HISTORY</div><h2>Recent activity</h2><p>Completed generations in this workspace.</p></div><label className="range-picker"><span className="sr-only">Filter activity date range</span><select value={activityRange} onChange={(event) => setActivityRange(event.target.value as ActivityRange)}><option value="all">All activity</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label></div><div className="activity-table"><div className="table-head"><span>GENERATION</span><span>MODEL</span><span>STATUS</span><span>COST</span><span/></div>{filteredActivity.slice(0, 6).map((entry) => <Activity key={entry.id} entry={entry} menuOpen={activityMenuId === entry.id} onToggleMenu={() => setActivityMenuId((current) => current === entry.id ? null : entry.id)} onInspect={() => { setActivityMenuId(null); setDialog({ kind: "activity", item: entry }); }} onRename={() => { setActivityMenuId(null); setDialog({ kind: "renameActivity", item: entry }); }} onDelete={() => { setActivityMenuId(null); setDialog({ kind: "deleteActivity", item: entry }); }}/>)}{filteredActivity.length === 0 && <div className="empty-activity">{activity.length ? "No generations in this date range." : "No generations recorded yet. Completed requests will appear here."}</div>}</div></section>
-          <section className="governance-card"><div className="section-heading compact"><div><div className="eyebrow">GOVERNANCE</div><h2>Workspace records</h2><p>Data saved locally for this workspace.</p></div><ShieldCheck size={18}/></div><div className="governance-list"><div><span className="check-circle"><Check size={11}/></span><span>Signed-in account</span><b>Active</b></div><div><span className="check-circle"><Check size={11}/></span><span>Versioned prompts</span><b>{prompts.length} saved</b></div><div><span className="check-circle"><Check size={11}/></span><span>Generation history</span><b>{activity.length} saved</b></div></div><button className="policy-link" onClick={() => setDialog({ kind: "safety" })}>Read governance policy <ArrowUpRight size={13}/></button></section></section>
+        <section className="overview-section" id="overview">
+          <div className="overview-heading"><div><div className="eyebrow"><span className="live-indicator"/> PRIVATE CREATIVE WORKSPACE</div><h1>Your studio, at a glance.</h1><p>Generate, review, and manage work across your local models.</p></div><button className="primary-button" onClick={newGeneration}><Plus size={16}/> New generation</button></div>
+          <div className="metrics-grid">
+            <Metric label="Generations" value={String(activity.length)} change="Saved" icon={<BarChart3 size={17}/>} note="In this workspace"/>
+            <Metric label="Tracked spend" value={spendKnown ? `$${totalSpend.toFixed(2)}` : "—"} change={spendKnown ? "Reported" : "Local"} icon={<LockKeyhole size={17}/>} note={spendKnown ? "Reported by provider" : "No provider cost data"}/>
+            <Metric label="Average latency" value={averageLatency === null ? "—" : `${(averageLatency / 1000).toFixed(1)}s`} change={activity.length ? "Tracked" : "Pending"} icon={<Clock3 size={17}/>} note="Across saved generations"/>
+            <Metric label="Safety checks" value={activity.length ? "Active" : "Ready"} change={auth.guardConfigured ? "Configured" : "Setup needed"} icon={<ShieldCheck size={17}/>} note="Requests checked before display"/>
+          </div>
+        </section>
+
+        <section className="lower-grid"><section className="activity-card"><div className="section-heading compact"><div><div className="eyebrow">HISTORY</div><h2>Recent activity <span className="activity-total">{filteredActivity.length} records</span></h2><p>Completed generations in this workspace.</p></div><label className="range-picker"><span className="sr-only">Filter activity date range</span><select value={activityRange} onChange={(event) => setActivityRange(event.target.value as ActivityRange)}><option value="all">All activity</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select></label></div><div className="activity-table" role="region" aria-label="Recent activity history" tabIndex={0}><div className="table-head"><span>GENERATION</span><span>MODEL</span><span>STATUS</span><span>COST</span><span/></div>{filteredActivity.map((entry) => <Activity key={entry.id} entry={entry} menuOpen={activityMenuId === entry.id} onToggleMenu={() => setActivityMenuId((current) => current === entry.id ? null : entry.id)} onInspect={() => { setActivityMenuId(null); setDialog({ kind: "activity", item: entry }); }} onRename={() => { setActivityMenuId(null); setDialog({ kind: "renameActivity", item: entry }); }} onDelete={() => { setActivityMenuId(null); setDialog({ kind: "deleteActivity", item: entry }); }}/>)}{filteredActivity.length === 0 && <div className="empty-activity">{activity.length ? "No generations in this date range." : "No generations recorded yet. Completed requests will appear here."}</div>}</div></section>
+          <section className="governance-card"><div className="section-heading compact"><div><div className="eyebrow">GOVERNANCE</div><h2>Workspace records</h2><p>Data saved locally for this workspace.</p></div><ShieldCheck size={18}/></div><div className="governance-list"><div><span className="check-circle"><Check size={11}/></span><span>Signed-in account</span><b>Active</b></div><div><span className="check-circle"><Check size={11}/></span><span>Versioned prompts</span><b>{prompts.length} saved</b></div><div><span className="check-circle"><Check size={11}/></span><span>Generation history</span><b>{activity.length} saved</b></div></div><button className="policy-link" onClick={() => setDialog({ kind: "safety" })}>Read governance policy <ArrowUpRight size={13}/></button><button className="policy-link" onClick={() => setDialog({ kind: "stack" })}>Explore the tech stack <ArrowUpRight size={13}/></button></section></section>
         <footer className="footer"><span>© 2026 Mosaic AI Studio</span><span><i className="footer-status"/>Signed in as {auth.email}</span><button onClick={() => setDialog({ kind: "safety" })}>Privacy and safety <ArrowUpRight size={12}/></button></footer>
       </div>
     </section>
@@ -301,16 +318,32 @@ function Dialog({ state, auth, active, imageQuality, profileName, activityCount,
   const [activityTitle, setActivityTitle] = useState(state.kind === "renameActivity" ? state.item.title : "");
   const [activityError, setActivityError] = useState("");
   const [activityBusy, setActivityBusy] = useState(false);
-  const title = state.kind === "settings" ? "Profile and settings" : state.kind === "help" ? "Studio guide" : state.kind === "safety" ? "Safety and governance" : state.kind === "model" ? "Model details" : state.kind === "renameActivity" ? "Rename activity" : state.kind === "deleteActivity" ? "Delete activity" : "Generation details";
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="modal-panel info-panel" role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="modal-header"><div><div className="eyebrow">MOSAIC STUDIO</div><h2 id="dialog-title">{title}</h2></div><button className="icon-button modal-close" onClick={onClose} aria-label="Close dialog"><X size={18}/></button></div>
-    {state.kind === "settings" && <><div className="settings-profile"><span className="profile-avatar large-avatar">{draftName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "ME"}</span><div><b>{draftName || "Workspace member"}</b><small>{auth.workspaceId ?? "Workspace"} · Private local account</small></div></div><form className="profile-settings-form" onSubmit={(event) => { event.preventDefault(); const value = draftName.trim(); if (!value) return; onSaveProfileName(value); setDraftName(value); setProfileSaved(true); }}><label htmlFor="profile-display-name">DISPLAY NAME</label><div><input id="profile-display-name" maxLength={48} value={draftName} onChange={(event) => { setDraftName(event.target.value); setProfileSaved(false); }} placeholder="Your name" required/><button className="secondary-button" type="submit" disabled={!draftName.trim()}>Save name</button></div><small>{profileSaved ? "Name saved on this device." : `Sign-in email: ${auth.email}`}</small></form><div className="dialog-section"><div className="eyebrow">CONNECTED SERVICES</div>{serviceInfo.map((service) => <div className="service-row" key={service.name}><span>{service.name}</span><small>{service.address}</small></div>)}</div><p className="dialog-note">Display name is saved in this browser. Sign-in email and provider credentials are managed in the project’s server-side <code>.env.local</code> file.</p><div className="modal-footer"><span>{activityCount} saved generations</span><button className="secondary-button" onClick={onSignOut}>Sign out</button></div></>}
+  const title = state.kind === "settings" ? "Profile and settings" : state.kind === "help" ? "Studio guide" : state.kind === "safety" ? "Safety and governance" : state.kind === "model" ? "Model details" : state.kind === "stack" ? "Technology stack" : state.kind === "renameActivity" ? "Rename activity" : state.kind === "deleteActivity" ? "Delete activity" : "Generation details";
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className={`modal-panel info-panel ${state.kind === "stack" ? "stack-panel" : ""}`} role="dialog" aria-modal="true" aria-labelledby="dialog-title"><div className="modal-header"><div><div className="eyebrow">MOSAIC STUDIO</div><h2 id="dialog-title">{title}</h2></div><button className="icon-button modal-close" onClick={onClose} aria-label="Close dialog"><X size={18}/></button></div>
+    {state.kind === "settings" && <><div className="settings-profile"><span className="profile-avatar large-avatar">{draftName.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]).join("").toUpperCase() || "ME"}</span><div><b>{draftName || "Workspace member"}</b><small>{auth.workspaceId ?? "Workspace"} · Private local account</small></div></div><form className="profile-settings-form" onSubmit={(event) => { event.preventDefault(); const value = draftName.trim(); if (!value) return; onSaveProfileName(value); setDraftName(value); setProfileSaved(true); }}><label htmlFor="profile-display-name">DISPLAY NAME</label><div><input id="profile-display-name" maxLength={48} value={draftName} onChange={(event) => { setDraftName(event.target.value); setProfileSaved(false); }} placeholder="Your name" required/><button className="secondary-button" type="submit" disabled={!draftName.trim()}>Save name</button></div><small>{profileSaved ? "Name saved on this device." : `Sign-in email: ${auth.email}`}</small></form><div className="dialog-section"><div className="eyebrow">CONNECTED SERVICES</div>{serviceInfo.map((service) => <div className="service-row" key={service.name}><span>{service.name}</span>{service.name === "Observability" ? <a className="service-link" href={LANGFUSE_TRACES_URL} target="_blank" rel="noopener noreferrer">{auth.langfuseConfigured ? "Open Langfuse traces ↗" : "Langfuse · configure keys"}</a> : <small>{service.address}</small>}</div>)}</div><p className="dialog-note">Display name is saved in this browser. Sign-in email and provider credentials are managed in the project’s server-side <code>.env.local</code> file. Langfuse keys stay on the server.</p><div className="modal-footer"><span>{activityCount} saved generations</span><button className="secondary-button" onClick={onSignOut}>Sign out</button></div></>}
     {state.kind === "help" && <><p className="dialog-lead">Use the studio tabs to create, review, and save work. The local services must be running before each modality is available.</p><div className="help-list">{tools.map((tool) => <div key={tool.name}><tool.icon size={17}/><span><b>{tool.name}</b><small>{tool.name === "Text" ? "Generate through LiteLLM and Ollama." : tool.name === "Image" ? "Generate with ComfyUI; choose a speed and detail preset." : tool.name === "Audio" ? "Switch between transcription and speech creation." : "Requires a configured ComfyUI video workflow."}</small></span></div>)}</div><div className="shortcut-note"><kbd>Ctrl</kbd><span>+</span><kbd>K</kbd><small>Open workspace search</small></div></>}
     {state.kind === "safety" && <><p className="dialog-lead">Mosaic checks prompts and generated content before displaying results. Local model checks can make mistakes; review outputs before sharing.</p><div className="help-list safety-list"><div><ShieldCheck size={17}/><span><b>Text and audio</b><small>Prompts, generated text, and transcripts are checked by the configured text guard.</small></span></div><div><ImageIcon size={17}/><span><b>Images</b><small>The image guard blocks unmistakable severe content. Ambiguous images can pass, so review each result.</small></span></div><div><LockKeyhole size={17}/><span><b>Data handling</b><small>Local media and workspace records stay in the project’s ignored .data folder.</small></span></div></div><div className="dialog-note">Report concerns to your workspace administrator. See <code>docs/governance-policy.md</code> in the project.</div></>}
+    {state.kind === "stack" && <TechStack/>}
     {state.kind === "model" && <><p className="dialog-lead">Current studio: <b>{active}</b></p><div className="dialog-section"><div className="eyebrow">ACTIVE MODEL</div><div className="service-row"><span>{tools.find((tool) => tool.name === active)?.model}</span><small>Local provider</small></div>{active === "Image" && <div className="service-row"><span>Image preset</span><small>{imageQuality === "quality" ? "Higher detail · 512×512 · 12 steps" : imageQuality === "balanced" ? "Balanced · 384×384 · 8 steps" : "Fast preview · 320×320 · 4 steps"}</small></div>}</div><p className="dialog-note">Change provider credentials and service URLs in the server-side environment file, then restart the app.</p></>}
     {state.kind === "activity" && <><p className="dialog-lead">{state.item.title}</p><div className="dialog-section"><div className="service-row"><span>Type</span><small>{state.item.modality}</small></div><div className="service-row"><span>Model</span><small>{state.item.model}</small></div><div className="service-row"><span>Completed</span><small>{new Date(state.item.createdAt).toLocaleString()}</small></div><div className="service-row"><span>Latency</span><small>{formatDuration(state.item.latencyMs)}</small></div><div className="service-row"><span>Provider cost</span><small>{state.item.costUsd === null ? "Not reported" : `$${state.item.costUsd.toFixed(4)}`}</small></div></div></>}
     {state.kind === "renameActivity" && <form className="activity-dialog-form" onSubmit={async (event) => { event.preventDefault(); setActivityBusy(true); setActivityError(""); const error = await onRenameActivity(state.item, activityTitle.trim()); if (error) setActivityError(error); setActivityBusy(false); }}><p className="dialog-lead">Choose a name for this saved {state.item.modality} generation.</p><label htmlFor="activity-title">ACTIVITY NAME</label><input id="activity-title" value={activityTitle} onChange={(event) => setActivityTitle(event.target.value)} maxLength={80} required autoFocus/><small>{activityTitle.trim().length}/80 characters</small>{activityError && <p className="activity-dialog-error" role="alert">{activityError}</p>}<div className="modal-footer"><button className="secondary-button" type="button" onClick={onClose}>Cancel</button><button className="primary-button" type="submit" disabled={activityBusy || !activityTitle.trim()}>{activityBusy ? "Saving…" : "Save name"}</button></div></form>}
     {state.kind === "deleteActivity" && <div className="activity-dialog-form"><p className="dialog-lead">Delete <b>{state.item.title}</b> from recent activity? This removes its saved history entry from this workspace.</p>{activityError && <p className="activity-dialog-error" role="alert">{activityError}</p>}<div className="modal-footer"><button className="secondary-button" onClick={onClose}>Keep activity</button><button className="delete-button" disabled={activityBusy} onClick={async () => { setActivityBusy(true); setActivityError(""); const error = await onDeleteActivity(state.item); if (error) setActivityError(error); setActivityBusy(false); }}>{activityBusy ? "Deleting…" : "Delete activity"}</button></div></div>}
   </section></div>;
+}
+
+function TechStack() {
+  return <div className="stack-content">
+    <p className="dialog-lead">A map of the tools behind Mosaic, the model each feature uses, and what is currently configured.</p>
+    <div className="stack-grid">
+      <article className="stack-card"><div className="stack-card-heading"><Code2 size={17}/><h3>Application</h3></div><ul><li><b>Next.js 15</b><span>Serves the studio and its API routes. Those server routes call providers so secret keys stay out of browser code.</span></li><li><b>React 19</b><span>Updates the interface as you switch tools, submit prompts, see results, and manage saved activity.</span></li><li><b>TypeScript</b><span>Checks the structure of requests, model results, and UI state while the app is developed.</span></li><li><b>Lucide React</b><span>Provides the consistent line icons used for navigation and actions.</span></li></ul></article>
+      <article className="stack-card"><div className="stack-card-heading"><MessageSquareText size={17}/><h3>Text and safety models</h3></div><p className="stack-card-intro"><b>LiteLLM</b> is the app’s single OpenAI-compatible gateway. It provides stable model aliases and forwards requests to <b>Ollama</b>, which serves the models locally.</p><ul><li><b>Qwen 2.5 3B · Ollama</b><span>Writes responses for the Text studio; LiteLLM alias <code>studio-text</code>.</span></li><li><b>Llama Guard 3 1B · Ollama</b><span>Checks text prompts and model responses before the app displays them; alias <code>studio-guard</code>.</span></li><li><b>Qwen 2.5 VL 3B · Ollama</b><span>Looks at generated images for the image safety check; alias <code>studio-image-guard</code>.</span></li></ul></article>
+      <article className="stack-card"><div className="stack-card-heading"><ImageIcon size={17}/><h3>Image and video</h3></div><ul><li><b>Stable Diffusion 1.5</b><span>The image model loaded by ComfyUI from the local checkpoint file. The app sends a workflow and prompt, then receives the generated image.</span></li><li><b>ComfyUI</b><span>Runs the node graph for image generation. The app changes resolution and sampling steps for Fast, Balanced, or Higher detail.</span></li><li><b>Video workflow adapter</b><span>Uses ComfyUI if a video workflow is added and configured. No ready-to-run video workflow is included, so video is not set up yet.</span></li></ul></article>
+      <article className="stack-card"><div className="stack-card-heading"><AudioLines size={17}/><h3>Audio</h3></div><ul><li><b>Faster Whisper small · Speaches</b><span>Turns an uploaded audio recording into text. Speaches serves Whisper behind an OpenAI-compatible transcription endpoint.</span></li><li><b>XTTS v2</b><span>Turns written text into spoken audio through the local XTTS service, which returns an audio file for playback or download.</span></li></ul></article>
+      <article className="stack-card"><div className="stack-card-heading"><Boxes size={17}/><h3>Docker</h3></div><p>Docker runs services in separate containers with their own software dependencies and network ports. In this project, it is used for LiteLLM and the audio services; this keeps those environments separate and makes them easier to start and stop. Containers connect to Ollama on Windows using <code>host.docker.internal</code>. Docker does not run the Next.js app, Ollama, or portable ComfyUI in this setup.</p></article>
+      <article className="stack-card"><div className="stack-card-heading"><Database size={17}/><h3>Data, security, and usage</h3></div><ul><li><b>Local JSON storage</b><span>Versioned prompts and activity metadata are saved under <code>.data</code>; generated media is saved locally too.</span></li><li><b>Workspace sign-in</b><span>A configured account is checked by the server, which issues a signed, HTTP-only session cookie.</span></li><li><b>Safety checks</b><span>Inputs and outputs are checked before display. Media receives its modality-specific review.</span></li><li><b>Langfuse observability</b><span>Optional server-side traces show model calls, modality, provider-call latency, and token usage when reported. Use them to inspect and compare provider performance; prompts and generated content are excluded. Langfuse does not generate or moderate content.</span></li><li><b>Costs</b><span>Mosaic stores end-to-end activity latency locally. Langfuse shows cost only when a provider reports it; local Ollama and ComfyUI calls typically report no dollar cost.</span></li></ul></article>
+    </div>
+    <div className="stack-note"><b>Langfuse role and privacy</b><span>Langfuse is the observability layer for provider calls, not the model gateway. Tracing is opt-in through server-side keys and records operational metadata without prompts, transcripts, generated text, filenames, or media bytes. Cost appears only when a provider reports it; video generation needs a separately configured workflow. <a href={LANGFUSE_TRACES_URL} target="_blank" rel="noopener noreferrer">Open the Langfuse trace dashboard <ArrowUpRight size={12}/></a></span></div>
+  </div>;
 }
 
 function LoginScreen({ configured, onLogin }: { configured: boolean; onLogin: (auth: AuthState) => void }) {
