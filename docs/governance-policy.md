@@ -6,7 +6,7 @@
 
 Use the studio for lawful creative, research, and productivity work that follows applicable organizational rules. Do not request or create content intended to facilitate violence, exploitation, fraud, harassment, privacy invasion, or other harmful or unlawful conduct. Do not use generated outputs as the sole basis for consequential decisions about people. Review generated content for accuracy, rights, bias, and audience fit before sharing or acting on it.
 
-Safety checks support this policy; they can make mistakes. A moderation pass is not an endorsement or proof that a result is safe, accurate, or legally compliant.
+Safety checks support this policy; they can make mistakes. The image check blocks only unmistakable depictions of severe cases such as child sexual exploitation, pornographic sexual activity, graphic realistic gore or serious violence, explicit self-harm, and hateful symbols or imagery. It allows mild or fictional conflict, ordinary weapons, medical or nonsexual anatomy, stylized scenes, and ambiguous or low-resolution images. This reduces false positives but increases the chance that harmful content may pass, so review generated images before sharing. A moderation pass is not an endorsement or proof that a result is safe, accurate, or legally compliant.
 
 ## Data handling
 

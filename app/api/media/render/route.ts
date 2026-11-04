@@ -6,13 +6,13 @@ import { runComfyWorkflow } from "@/lib/comfy";
 import { saveMedia } from "@/lib/media-store";
 
 export const runtime = "nodejs";
-export const maxDuration = 300;
+export const maxDuration = 900;
 
 export async function POST(request: NextRequest) {
   const session = await currentSession();
   if (!session) return NextResponse.json({ error: "Sign in to use this workspace." }, { status: 401 });
 
-  let body: { modality?: string; prompt?: string };
+  let body: { modality?: string; prompt?: string; imageQuality?: string };
   try { body = await request.json(); } catch { return NextResponse.json({ error: "Request must contain valid JSON." }, { status: 400 }); }
   const modality = body.modality;
   const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
@@ -25,7 +25,8 @@ export async function POST(request: NextRequest) {
   try {
     if (await moderateText(prompt, "input") !== "safe") return NextResponse.json({ error: "This prompt was blocked by the input safety check." }, { status: 422 });
     phase = "comfy_generation";
-    const generated = await runComfyWorkflow(modality, prompt);
+    const quality = body.imageQuality === "fast" || body.imageQuality === "balanced" ? body.imageQuality : "quality";
+    const generated = await runComfyWorkflow(modality, prompt, quality);
     phase = "image_safety";
     if (modality === "image" && await moderateImage(generated.bytes, generated.mimeType) !== "safe") {
       return NextResponse.json({ error: "The generated image was withheld by the image safety check." }, { status: 422 });

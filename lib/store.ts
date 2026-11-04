@@ -98,3 +98,25 @@ export async function listActivity(userEmail: string) {
   const data = await load();
   return data.activity.filter((record) => record.userEmail === userEmail).slice(0, 100);
 }
+
+export async function renameActivity(userEmail: string, id: string, title: string) {
+  let updated = false;
+  await update((data) => {
+    const record = data.activity.find((item) => item.id === id && item.userEmail === userEmail);
+    if (!record) return;
+    record.title = title;
+    updated = true;
+  });
+  return updated;
+}
+
+export async function deleteActivity(userEmail: string, id: string) {
+  let deleted = false;
+  await update((data) => {
+    const index = data.activity.findIndex((item) => item.id === id && item.userEmail === userEmail);
+    if (index < 0) return;
+    data.activity.splice(index, 1);
+    deleted = true;
+  });
+  return deleted;
+}

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { randomInt } from "node:crypto";
 import path from "node:path";
 
 type Artifact = { filename: string; subfolder?: string; type?: string };
@@ -27,18 +28,33 @@ function artifactsFromHistory(entry: { outputs?: Record<string, Record<string, u
   return artifacts;
 }
 
-export async function runComfyWorkflow(kind: "image" | "video", text: string) {
+export async function runComfyWorkflow(kind: "image" | "video", text: string, imageQuality: "fast" | "quality" = "quality") {
   const base = process.env.COMFYUI_BASE_URL?.trim();
   const workflowPath = process.env[kind === "image" ? "COMFYUI_IMAGE_WORKFLOW_PATH" : "COMFYUI_VIDEO_WORKFLOW_PATH"]?.trim();
   const promptNodeId = process.env[kind === "image" ? "COMFYUI_IMAGE_PROMPT_NODE_ID" : "COMFYUI_VIDEO_PROMPT_NODE_ID"]?.trim();
   if (!base || !workflowPath || !promptNodeId) throw new Error(`${kind}_provider_not_configured`);
 
   const resolvedPath = path.isAbsolute(workflowPath) ? workflowPath : path.join(process.cwd(), workflowPath);
-  let workflow: Record<string, { inputs?: Record<string, unknown> }>;
+  let workflow: Record<string, { class_type?: string; inputs?: Record<string, unknown> }>;
   try { workflow = JSON.parse(await readFile(resolvedPath, "utf8")) as typeof workflow; }
   catch { throw new Error(`${kind}_workflow_unavailable`); }
   if (!workflow[promptNodeId]?.inputs || typeof workflow[promptNodeId].inputs?.text !== "string") throw new Error(`${kind}_prompt_node_invalid`);
   workflow[promptNodeId].inputs!.text = text;
+  if (kind === "image") {
+    const preset = imageQuality === "fast" ? { width: 320, height: 320, steps: 4 }
+      : imageQuality === "balanced" ? { width: 384, height: 384, steps: 8 }
+      : { width: 512, height: 512, steps: 12 };
+    for (const node of Object.values(workflow)) {
+      if (node.class_type === "EmptyLatentImage" && node.inputs) {
+        node.inputs.width = preset.width;
+        node.inputs.height = preset.height;
+      }
+      if (node.class_type === "KSampler" && node.inputs) {
+        node.inputs.steps = preset.steps;
+        node.inputs.seed = randomInt(0, 2 ** 32);
+      }
+    }
+  }
 
   const headers = { "Content-Type": "application/json", ...(process.env.COMFYUI_API_KEY ? { Authorization: `Bearer ${process.env.COMFYUI_API_KEY}` } : {}) };
   const queued = await fetch(`${base.replace(/\/$/, "")}/prompt`, {
@@ -48,7 +64,7 @@ export async function runComfyWorkflow(kind: "image" | "video", text: string) {
   const queueData = await queued.json() as { prompt_id?: string; error?: unknown; node_errors?: unknown };
   if (!queueData.prompt_id) throw new Error(`${kind}_workflow_rejected`);
 
-  const timeout = Math.min(Math.max(Number(process.env.COMFYUI_TIMEOUT_MS) || 180_000, 20_000), 300_000);
+  const timeout = Math.min(Math.max(Number(process.env.COMFYUI_TIMEOUT_MS) || 900_000, 20_000), 900_000);
   const deadline = Date.now() + timeout;
   let artifacts: Artifact[] = [];
   while (Date.now() < deadline) {

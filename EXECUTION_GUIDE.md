@@ -97,7 +97,7 @@ LITELLM_IMAGE_GUARD_MODEL=studio-image-guard
 COMFYUI_BASE_URL=http://localhost:8188
 COMFYUI_IMAGE_WORKFLOW_PATH=workflows/image.api.json
 COMFYUI_IMAGE_PROMPT_NODE_ID=6
-COMFYUI_TIMEOUT_MS=300000
+COMFYUI_TIMEOUT_MS=900000
 
 WHISPER_BASE_URL=http://localhost:8000
 WHISPER_MODEL=Systran/faster-whisper-small
@@ -148,7 +148,7 @@ cd /d "C:\Users\patil\Downloads\ComfyUI_windows_portable"
 python_embeded\python.exe -s ComfyUI\main.py --cpu --windows-standalone-build
 ```
 
-The included API workflow uses the SD 1.5 checkpoint at 320×320 and 4 steps to reduce CPU time. It still takes time on a CPU. If ComfyUI reports its database is already in use, close the other ComfyUI process before starting another one.
+The image tab defaults to a higher-detail preset (512×512, 12 steps), with a balanced preset (384×384, 8 steps) and fast preview preset (320×320, 4 steps). A new random seed is used for each image. Higher-detail generation takes longer on a CPU. If ComfyUI reports its database is already in use, close the other ComfyUI process before starting another one.
 
 ### Window 4 — Speaches for transcription
 
