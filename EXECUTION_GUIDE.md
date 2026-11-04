@@ -1,202 +1,220 @@
-# Mosaic AI Studio — Execution Guide
+# Mosaic AI Studio — Windows Setup and Run Guide
 
-This guide explains how to unpack, configure, run, and verify the current local MVP on Windows. The same npm commands work on macOS and Linux.
+This guide covers the local Windows setup and daily startup for text generation, image generation, speech transcription, and speech creation. Commands below are for **Command Prompt (CMD)**. Each long-running service needs its own CMD window unless noted.
 
-## 1. Requirements
+## What runs locally
 
-- Node.js 20.9 or newer
-- npm (included with Node.js)
-- LiteLLM proxy credentials and a reachable guard-model alias to run text generation
+| Feature | Service | Address / model |
+| --- | --- | --- |
+| Text and text safety | Ollama through LiteLLM | Ollama `11434`; LiteLLM `4000` |
+| Image generation | ComfyUI | `8188`; SD 1.5 checkpoint |
+| Image safety | Qwen2.5-VL through LiteLLM | Alias `studio-image-guard` |
+| Audio transcription | Speaches / faster-whisper | `8000`; `Systran/faster-whisper-small` |
+| Speech creation | Coqui XTTS v2 | `8002`; CPU image |
 
-The UI, sign-in, prompt library, and local activity store can be explored before a model provider is configured. Generation stays unavailable until LiteLLM is configured.
+The included video tab needs a separate ComfyUI video model and an exported `workflows/video.api.json`. That workflow is not included, so video generation is not ready from this setup guide.
 
-## 2. Unpack the project
+## 1. One-time prerequisites
 
-Extract `mosaic-ai-studio-complete.zip` to a folder you can edit, then open a terminal in that folder. The folder should contain `package.json`, `app/`, `lib/`, and `docs/`.
+Install Node.js 20.9+, Ollama for Windows, Docker Desktop, and ComfyUI Portable. Start Docker Desktop and Ollama. Keep ComfyUI extracted here, as in the commands below:
 
-In PowerShell, for example:
-
-```powershell
-Expand-Archive .\mosaic-ai-studio-complete.zip -DestinationPath .\mosaic-ai-studio
-Set-Location .\mosaic-ai-studio
+```text
+C:\Users\patil\Downloads\ComfyUI_windows_portable
 ```
 
-## 3. Configure local sign-in
+Open CMD in the project folder:
 
-Create a private environment file from the template:
+```cmd
+cd /d "C:\Users\patil\Documents\Codex\2026-10-28\multimodal-ai-studio-with-safety-and"
+```
 
-```powershell
-Copy-Item .env.example .env.local
+Install the Node dependencies once:
+
+```cmd
+npm.cmd install
+```
+
+Create `.env.local` from the template only if you do not already have it:
+
+```cmd
+if not exist .env.local copy .env.example .env.local
 notepad .env.local
 ```
 
-Set these values in `.env.local`:
+Keep any existing settings in `.env.local`; add or update the values in section 4. This file contains secrets and must not be committed to Git.
 
-```dotenv
-STUDIO_LOGIN_EMAIL=you@example.com
-STUDIO_LOGIN_PASSWORD=choose-a-unique-strong-password
-STUDIO_SESSION_SECRET=paste-a-random-secret-of-at-least-32-characters
-STUDIO_WORKSPACE_ID=northstar
-```
+## 2. Download the local Ollama models once
 
-Generate a session secret in PowerShell:
+Open CMD and pull the three models used by the configured LiteLLM aliases:
 
-```powershell
-node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
-```
-
-The app has one environment-configured account, not public registration. The session cookie is HTTP-only, signed, and lasts 12 hours. `.env.local` is excluded from the project bundle and ignored by Git. Never commit it. If you rotate the session secret, existing browser sessions become invalid.
-
-## 4. Configure LiteLLM for text generation (local Windows demo)
-
-The recommended demo path uses Ollama for local models and LiteLLM as the gateway. It does not need a paid model-provider key. Install [Ollama for Windows](https://ollama.com/download/windows) and [Docker Desktop](https://docs.docker.com/desktop/setup/install/windows-install/), start both, then open PowerShell in the project folder.
-
-Download one small chat model and one Llama Guard model:
-
-```powershell
+```cmd
 ollama pull qwen2.5:3b
 ollama pull llama-guard3:1b
+ollama pull qwen2.5vl:3b
 ollama list
 ```
 
-The included `litellm_config.yaml` registers the public aliases `studio-text` and `studio-guard` and points Docker at Ollama on the Windows host. Generate a private gateway key and save it in an ignored local file:
+Ollama normally runs in the background after installing its Windows app. If `ollama list` says it cannot connect, start Ollama in a separate CMD window with `ollama serve` and leave that window open. Do not run a second Ollama server if the app is already serving on port 11434.
 
-```powershell
-$gatewayKey = 'sk-' + (node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('hex'))")
-Set-Content -NoNewline .env.litellm "LITELLM_MASTER_KEY=$gatewayKey"
-Remove-Variable gatewayKey
+## 3. Download the ComfyUI image checkpoint once
+
+The image workflow expects this exact file name in ComfyUI's checkpoints folder. You already downloaded it, so skip this step if the file is present.
+
+```cmd
+cd /d "C:\Users\patil\Downloads\ComfyUI_windows_portable\ComfyUI\models\checkpoints"
+curl.exe -L -C - -o v1-5-pruned-emaonly-fp16.safetensors https://huggingface.co/Comfy-Org/stable-diffusion-1.5/resolve/main/v1-5-pruned-emaonly-fp16.safetensors
 ```
 
-Start LiteLLM; keep this PowerShell window open while using the app:
+The file is about 2.13 GB. The `-C -` option lets curl continue a partial download. The checkpoint comes from [Comfy-Org on Hugging Face](https://huggingface.co/Comfy-Org/stable-diffusion-1.5/blob/main/v1-5-pruned-emaonly-fp16.safetensors).
 
-```powershell
-docker run --rm --name mosaic-litellm `
-  -p 4000:4000 `
-  -v "$((Get-Location).Path)\litellm_config.yaml:/app/config.yaml:ro" `
-  --env-file .env.litellm `
-  docker.litellm.ai/berriai/litellm:latest `
-  --config /app/config.yaml
+## 4. Configure `.env.local` and the LiteLLM key once
+
+Create a LiteLLM key in CMD:
+
+```cmd
+node -e "console.log('sk-' + require('node:crypto').randomBytes(32).toString('hex'))"
 ```
 
-In another PowerShell window, open `.env.litellm` and copy its `LITELLM_MASTER_KEY` value into `.env.local` as `LITELLM_API_KEY`. Set the remaining app values as follows:
+Copy the printed value. Open or create `.env.litellm` and set `LITELLM_MASTER_KEY` to that value. Set `LITELLM_API_KEY` in `.env.local` to the same value. Do not paste either key into chat or GitHub.
+
+Create a separate session secret for the app:
+
+```cmd
+node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"
+```
+
+In `.env.local`, set `STUDIO_LOGIN_EMAIL`, choose a private `STUDIO_LOGIN_PASSWORD`, and paste the generated value into `STUDIO_SESSION_SECRET`. Keep `STUDIO_WORKSPACE_ID=northstar` or set another short workspace name. Use a unique password; these values configure the local sign-in screen.
+
+Make sure `.env.local` has these settings. Keep the login settings already present in that file. Leave `XTTS_VOICE` blank to use the first available built-in voice.
 
 ```dotenv
 LITELLM_BASE_URL=http://localhost:4000
+LITELLM_API_KEY=your-generated-sk-key
 LITELLM_TEXT_MODEL=studio-text
 LITELLM_GUARD_MODEL=studio-guard
-```
+LITELLM_IMAGE_GUARD_MODEL=studio-image-guard
 
-Keep all other `.env.local` values. Never commit either local environment file or put secrets in `NEXT_PUBLIC_*` variables. Restart `npm.cmd run dev` after changing `.env.local`.
-
-Verify that LiteLLM is serving the aliases:
-
-```powershell
-$gatewayKey = (Get-Content .env.litellm | Where-Object { $_ -like 'LITELLM_MASTER_KEY=*' }) -replace '^LITELLM_MASTER_KEY=', ''
-Invoke-RestMethod http://localhost:4000/v1/models -Headers @{ Authorization = "Bearer $gatewayKey" }
-Remove-Variable gatewayKey
-```
-
-The app sends requests to `/v1/chat/completions`. Input and output are checked by the configured guard alias; a missing verdict or a verdict beginning with `unsafe` withholds the response. LiteLLM aliases must exactly match the configured `model_name` values. For hosted providers, keep provider API keys in LiteLLM's configuration and continue to give the app only the LiteLLM key.
-
-## 5. Connect image, video, and audio services
-
-The media tabs now call server-side adapters. They need local services in addition to LiteLLM. Start with the modality you want to try; leave other service URLs blank until you have those services running.
-
-### Image and video with ComfyUI
-
-Install [ComfyUI Desktop](https://github.com/Comfy-Org/ComfyUI) and load a model/workflow that works in ComfyUI first. For each workflow, choose **Save (API Format)** and save its JSON under the project’s `workflows/` folder. The image workflow must output a PNG/JPEG/WebP image; the video workflow must output MP4/WebM/MOV (or GIF). Find the positive text prompt node ID in that API JSON.
-
-Set in `.env.local`:
-
-```dotenv
 COMFYUI_BASE_URL=http://localhost:8188
 COMFYUI_IMAGE_WORKFLOW_PATH=workflows/image.api.json
-COMFYUI_IMAGE_PROMPT_NODE_ID=the-image-prompt-node-id
-COMFYUI_VIDEO_WORKFLOW_PATH=workflows/video.api.json
-COMFYUI_VIDEO_PROMPT_NODE_ID=the-video-prompt-node-id
-COMFYUI_TIMEOUT_MS=180000
-LITELLM_IMAGE_GUARD_MODEL=studio-image-guard
+COMFYUI_IMAGE_PROMPT_NODE_ID=6
+COMFYUI_TIMEOUT_MS=300000
+
+WHISPER_BASE_URL=http://localhost:8000
+WHISPER_MODEL=Systran/faster-whisper-small
+
+XTTS_BASE_URL=http://localhost:8002
+XTTS_VOICE=
+XTTS_LANGUAGE=en
 ```
 
-Image results are withheld unless the configured vision model returns a clear `safe` verdict. The included LiteLLM config has a `studio-image-guard` alias for Ollama’s Qwen2.5-VL. Download it with `ollama pull qwen2.5vl:3b`, then restart LiteLLM so it loads the added alias. Video prompt safety is enabled, but sampled-frame video moderation is still future work.
+The project includes `litellm_config.yaml` with aliases for Qwen text, Llama Guard, and Qwen vision. Restart the Node app after changing `.env.local`.
 
-### Speech-to-text with Whisper
+## 5. Start the whole app for daily use
 
-The app expects an OpenAI-compatible `POST /v1/audio/transcriptions` endpoint. [Speaches](https://github.com/speaches-ai/speaches) provides one with faster-whisper and can run on CPU or CUDA. For a CPU demo, run:
+Start only the services you need, or use all six CMD windows for the full local demo. First startup may download container images or models. Keep each foreground window open while using its feature.
+
+### Window 1 — Ollama
+
+Ollama usually starts automatically. Check it and make sure the three models are listed:
+
+```cmd
+ollama list
+```
+
+If it is not running, use `ollama serve` in this window and leave it open.
+
+### Window 2 — LiteLLM gateway
+
+From the project folder, create the container once. This runs LiteLLM in the background and keeps the named container available:
+
+```cmd
+cd /d "C:\Users\patil\Documents\Codex\2026-10-28\multimodal-ai-studio-with-safety-and"
+docker run -d --name mosaic-litellm -p 4000:4000 --mount "type=bind,source=%cd%\litellm_config.yaml,target=/app/config.yaml,readonly" --env-file .env.litellm docker.litellm.ai/berriai/litellm:latest --config /app/config.yaml
+```
+
+On later days, if the container exists but is stopped, run `docker start mosaic-litellm`. If it is already **Up**, leave it alone. Check status or recent logs with:
+
+```cmd
+docker ps --filter "name=mosaic-litellm"
+docker logs --tail 30 mosaic-litellm
+```
+
+### Window 3 — ComfyUI for image generation
+
+Run the CPU version. Leave this window open; the ComfyUI page is at `http://localhost:8188`.
+
+```cmd
+cd /d "C:\Users\patil\Downloads\ComfyUI_windows_portable"
+python_embeded\python.exe -s ComfyUI\main.py --cpu --windows-standalone-build
+```
+
+The included API workflow uses the SD 1.5 checkpoint at 320×320 and 4 steps to reduce CPU time. It still takes time on a CPU. If ComfyUI reports its database is already in use, close the other ComfyUI process before starting another one.
+
+### Window 4 — Speaches for transcription
+
+This uses the CPU image. Keep the window open; Speaches is at `http://localhost:8000`.
 
 ```cmd
 docker run --rm --name speaches -p 8000:8000 -v speaches-cache:/home/ubuntu/.cache/huggingface/hub ghcr.io/speaches-ai/speaches:latest-cpu
 ```
 
-Set `WHISPER_BASE_URL=http://localhost:8000` and `WHISPER_MODEL=Systran/faster-whisper-small` in `.env.local`. The Audio tab’s **Transcribe audio** action accepts files up to 25 MB; the transcript is checked by the text guard before it appears.
-
-### Text-to-speech with XTTS
-
-Review and accept the [Coqui Public Model License](https://coqui.ai/cpml) before running its XTTS model. The official XTTS streaming server exposes the `/studio_speakers` and `/tts` endpoints used by this app. A CPU demo (slower than GPU) can run with:
+The app requests `Systran/faster-whisper-small`. Speaches can download a model automatically when requested. To download it explicitly after Speaches starts, use another CMD window:
 
 ```cmd
-docker run --rm --name xtts -p 8002:80 -e COQUI_TOS_AGREED=1 ghcr.io/coqui-ai/xtts-streaming-server:latest-cpu
+curl.exe -X POST http://localhost:8000/v1/models/Systran/faster-whisper-small
 ```
 
-Only run this after agreeing to the model terms; the environment flag records that agreement. Set `XTTS_BASE_URL=http://localhost:8002` and optionally `XTTS_VOICE` to a speaker name returned by that server. The Audio tab’s **Create speech** action checks the input text before synthesis.
+You can check loaded models with `http://localhost:8000/v1/models` in a browser.
 
-After editing `.env.local`, restart the Next.js server. Keep each media service’s terminal/container running during use. Generated media is stored under `.data/media/` and served only to signed-in users. The `.data/` directory is ignored by Git.
+### Window 5 — XTTS for speech creation
 
-## 6. Install and run
+Read and agree to the [Coqui Public Model License](https://coqui.ai/cpml) before running XTTS. The environment flag records that agreement. XTTS downloads its model on first startup; a named volume keeps the model between runs. CPU speech generation can be slow.
 
-```powershell
-npm.cmd install
+```cmd
+docker run --rm --name xtts -p 8002:80 -e COQUI_TOS_AGREED=1 -e TTS_HOME=/root/.local/share -v xtts-model-cache:/root/.local/share/tts ghcr.io/coqui-ai/xtts-streaming-server:latest-cpu
+```
+
+Wait for `Running XTTS Server ...` before testing speech. Keep the window open.
+
+### Window 6 — Mosaic Next.js app
+
+From the project folder, start the app:
+
+```cmd
+cd /d "C:\Users\patil\Documents\Codex\2026-10-28\multimodal-ai-studio-with-safety-and"
 npm.cmd run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), then sign in with the email and password you set in `.env.local`.
+Open [http://localhost:3000](http://localhost:3000) and sign in with `STUDIO_LOGIN_EMAIL` and `STUDIO_LOGIN_PASSWORD` from `.env.local`. If you have not installed the app dependencies yet, run `npm.cmd install` once before starting the app.
 
-If PowerShell blocks `npm`, use `npm.cmd` as shown. If port 3000 is already occupied, run:
+## 6. Generate each type of output in the app
 
-```powershell
-npm.cmd run dev -- -p 3001
-```
+There is no separate CMD command for each generation. Use the matching tab in Mosaic; the app calls the local service and applies its safety check.
 
-Then open [http://localhost:3001](http://localhost:3001).
+- **Text:** Text tab → enter a prompt → **Generate text**. Requires Ollama and LiteLLM.
+- **Image:** Image tab → enter a prompt → **Generate image**. Requires ComfyUI, the checkpoint, LiteLLM, and the image guard model.
+- **Transcription:** Audio tab → **Transcribe audio** → choose a WAV, MP3, M4A, or other accepted audio file → **Transcribe audio**. Requires Speaches and LiteLLM for transcript safety. To transcribe speech you just created, use its **Download** link first, then select that file.
+- **Speech creation:** Audio tab → **Create speech** → type text → **Create speech**. Requires XTTS and LiteLLM for input safety.
+- **Video:** Not configured in this local setup. It needs a compatible video model plus a `video.api.json` ComfyUI workflow and prompt node ID.
 
-## 7. Use the app
+Generated media is stored in `.data/media/`. The dashboard records local usage and latency. Local providers do not report a dollar cost, so cost can remain blank.
 
-1. Use the Text, Image, Audio, and Video tabs. Image/video need ComfyUI workflows; Audio offers Whisper transcription and XTTS speech.
-2. Type a prompt, then choose **Save prompt** to add it to the prompt library. Loading a saved prompt and saving changes creates the next numbered version.
-3. Generate text through LiteLLM, images/video through ComfyUI, transcriptions through Whisper, or speech through XTTS. Successful media previews carry a visible AI-generated label.
-4. Sign out from the account control at the bottom of the navigation.
-5. Check the dashboard for locally recorded generation counts and latency. Spend remains blank until a provider reports cost data.
+## 7. Stop services and restart later
 
-Saved prompts and safety-cleared generation metadata are stored in `.data/workspace.json`. This local JSON store is meant for a single-process demo. It is not suitable for concurrent, serverless, or production deployments. The prompt store seeds three example prompts on first use.
+- Stop Node.js or ComfyUI with **Ctrl+C** in that service's CMD window.
+- Stop Speaches or XTTS with **Ctrl+C** in its CMD window. The container is removed, but the named model-cache volume remains.
+- Stop LiteLLM with `docker stop mosaic-litellm`. Start it next time with `docker start mosaic-litellm`.
+- Ollama can remain in the Windows background; if you started `ollama serve` manually, stop it with **Ctrl+C**.
 
-## 8. Verify the project
+If LiteLLM reports that the container name is already used, check `docker ps -a --filter "name=mosaic-litellm"` and start the existing container instead of creating a second one. If any feature times out, first check that its service window is still open and its port is the one listed above.
 
-```powershell
+## 8. Useful project checks
+
+Run from the project folder when you want to check the app code:
+
+```cmd
 npm.cmd run lint
 npm.cmd run build
-npm.cmd audit
 ```
 
-`lint` currently runs TypeScript type checking. Before presenting the project, also verify text generation with your own staging gateway using safe prompts, blocked prompts, guard timeouts, and output moderation. Record measured latency and cost only from provider responses.
-
-## 9. Production run
-
-After configuring the environment and reviewing the limitations:
-
-```powershell
-npm.cmd run build
-npm.cmd run start
-```
-
-This does not make the current MVP production-ready. Before deployment, replace the single-account environment login and JSON storage with a managed identity provider, workspace roles, and a durable database. Add rate limits, real budget enforcement, Langfuse traces, image moderation, media provenance labels, and deployment-safe secret management.
-
-## What's in the bundle
-
-- `app/`: Next.js studio UI and API routes
-- `lib/`: signed session helpers and local prompt/activity store
-- `docs/architecture.md`: current and planned system flow
-- `docs/governance-policy.md`: acceptable use, data handling, and incident reporting
-- `README.md`: feature status, API notes, and remaining work
-- `.env.example`: configuration template without credentials
-
-The archive intentionally excludes `.env.local`, `.data/`, `node_modules/`, `.next/`, and test scratch files. Configure your own account and secrets after extracting it.
+These are development checks, not service startup commands. `.env.local`, `.env.litellm`, generated media, and model weights must stay out of Git.

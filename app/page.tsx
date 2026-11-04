@@ -8,7 +8,13 @@ type AudioAction = "transcribe" | "speak";
 type AuthState = { authenticated: boolean; configured: boolean; guardConfigured?: boolean; email?: string; workspaceId?: string };
 type PromptItem = { id: string; title: string; content: string; version: number; updatedAt: string };
 type ActivityItem = { id: string; title: string; modality: string; model: string; status: "complete"; costUsd: number | null; latencyMs: number; createdAt: string };
-type MediaResult = { url: string; mimeType: string; label: string };
+type MediaResult = { url: string; mimeType: string; label: string; latencyMs: number | null };
+function formatDuration(ms: number) {
+  const totalSeconds = Math.round(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes ? `${minutes}m ${seconds}s` : `${seconds}s`;
+}
 const navItems = [
   { name: "Overview", icon: LayoutDashboard },
   { name: "Text studio", icon: MessageSquareText, tool: "Text" as Tool },
@@ -100,8 +106,9 @@ export default function Home() {
       if (response.status === 401) { setAuth((current) => current ? { ...current, authenticated: false } : current); return; }
       if (!response.ok) { setNotice(data.error ?? (response.status === 503 && active === "Text" ? "Configure LiteLLM and the safety model in .env.local to generate text." : "Generation could not be completed.")); return; }
       if (data.text) { setGeneratedText(data.text); setGeneratedLabel(transcribing ? "TRANSCRIPT" : "AI-GENERATED"); }
-      if (data.url && data.mimeType) setMediaResult({ url: data.url, mimeType: data.mimeType, label: transcribing ? "TRANSCRIPT · SAFETY CHECK PASSED" : "AI-GENERATED · SAFETY CHECKS PASSED" });
-      setNotice(`Safety checks passed · ${data.latencyMs} ms · Cost tracking will appear when the provider reports cost data.`);
+      if (data.url && data.mimeType) setMediaResult({ url: data.url, mimeType: data.mimeType, latencyMs: typeof data.latencyMs === "number" ? data.latencyMs : null, label: transcribing ? "TRANSCRIPT · SAFETY CHECK PASSED" : "AI-GENERATED · SAFETY CHECKS PASSED" });
+      const elapsed = typeof data.latencyMs === "number" ? `Completed in ${formatDuration(data.latencyMs)}` : "Completed";
+      setNotice(`Safety checks passed · ${elapsed} · Cost tracking will appear when the provider reports cost data.`);
       await refreshWorkspace();
     } catch { setNotice("Could not reach the studio API. Check that the app server is running."); }
     finally { setGenerating(false); }
@@ -137,12 +144,12 @@ export default function Home() {
         <section className="studio-card"><div className="tool-tabs">{tools.map(({name,icon:Icon}) => <button key={name} className={`tool-tab ${active === name ? "active" : ""}`} onClick={() => selectTool(name)}><Icon size={16}/>{name}{name === "Audio" && <span className="soon">STT + TTS</span>}</button>)}</div>
           <div className="studio-body"><div className="model-row"><div className="model-picker"><span className="model-spark">✦</span><span>{selected.model}</span><ChevronDown size={14}/></div><span className="model-meta">{selected.detail}</span><button className="icon-button settings-icon" aria-label="Model settings"><Settings2 size={16}/></button></div>
             {active === "Audio" && <div className="audio-mode-switch" role="group" aria-label="Audio task"><button className={audioAction === "transcribe" ? "chosen" : ""} onClick={() => { setAudioAction("transcribe"); setNotice(""); setGeneratedText(""); setMediaResult(null); }}>Transcribe audio</button><button className={audioAction === "speak" ? "chosen" : ""} onClick={() => { setAudioAction("speak"); setNotice(""); setGeneratedText(""); setMediaResult(null); }}>Create speech</button></div>}
-            {active === "Audio" && audioAction === "transcribe" ? <div className="upload-field"><label className="prompt-label" htmlFor="audio-upload">AUDIO FILE · MAX 25 MB</label><input id="audio-upload" type="file" accept="audio/*,.wav,.mp3,.m4a,.webm,.ogg" onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)}/>{audioFile && <span className="upload-filename">{audioFile.name} · {(audioFile.size / (1024 * 1024)).toFixed(1)} MB</span>}</div> : <><label className="prompt-label" htmlFor="prompt">{active === "Audio" ? "TEXT TO SPEAK" : active === "Image" ? "DESCRIBE YOUR IMAGE" : active === "Video" ? "DESCRIBE YOUR VIDEO" : "YOUR PROMPT"}</label><textarea id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={selected.placeholder}/></>}
+            {active === "Audio" && audioAction === "transcribe" ? <div className="upload-field"><label className="prompt-label" htmlFor="audio-upload">AUDIO FILE · MAX 25 MB</label><input id="audio-upload" type="file" onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)}/>{audioFile && <span className="upload-filename">{audioFile.name} · {(audioFile.size / (1024 * 1024)).toFixed(1)} MB</span>}</div> : <><label className="prompt-label" htmlFor="prompt">{active === "Audio" ? "TEXT TO SPEAK" : active === "Image" ? "DESCRIBE YOUR IMAGE" : active === "Video" ? "DESCRIBE YOUR VIDEO" : "YOUR PROMPT"}</label><textarea id="prompt" value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder={selected.placeholder}/></>}
             <div className="editor-footer"><div className="editor-hints"><span><LockKeyhole size={13}/> Private to your workspace</span><span className="hint-divider">·</span><span>{prompt.length} / 4,000</span></div><div className="editor-actions">{active === "Text" && <button className="save-prompt-button" onClick={saveCurrentPrompt} disabled={savingPrompt}><BookOpen size={14}/>{savingPrompt ? "Saving…" : "Save prompt"}</button>}<button className="generate-button" onClick={generate} disabled={generating}><WandSparkles size={16}/>{generating ? "Working…" : active === "Audio" ? audioAction === "transcribe" ? "Transcribe audio" : "Create speech" : selected.button}<span>→</span></button></div></div>
             {saveMessage && <div className="save-message">{saveMessage}<button onClick={() => setSaveMessage("")} aria-label="Dismiss"><X size={13}/></button></div>}
             {notice && <div className="notice"><ShieldCheck size={15}/><span>{notice}</span><button aria-label="Dismiss" onClick={() => setNotice("")}><X size={14}/></button></div>}
             {generatedText && <section className="generated-output"><div className="output-label"><span><Sparkles size={13}/> {generatedLabel}</span><span className="output-safety"><ShieldCheck size={13}/> Safety checks passed</span></div><p>{generatedText}</p></section>}
-            {mediaResult && <section className="media-result"><div className="output-label"><span><Sparkles size={13}/>{mediaResult.label}</span><a href={mediaResult.url} download>Download</a></div>{mediaResult.mimeType.startsWith("image/") ? <img src={mediaResult.url} alt="AI-generated visual"/> : mediaResult.mimeType.startsWith("video/") ? <video src={mediaResult.url} controls/> : <audio src={mediaResult.url} controls/>}</section>}
+            {mediaResult && <section className="media-result"><div className="output-label"><span><Sparkles size={13}/>{mediaResult.label}</span><a href={mediaResult.url} download>Download</a></div>{mediaResult.mimeType.startsWith("image/") ? <><img src={mediaResult.url} alt="AI-generated visual"/>{mediaResult.latencyMs !== null && <div className="media-details"><span><Clock3 size={12}/> Completed in {formatDuration(mediaResult.latencyMs)} · includes safety checks</span></div>}</> : mediaResult.mimeType.startsWith("video/") ? <video src={mediaResult.url} controls/> : <audio src={mediaResult.url} controls/>}</section>}
             <div className="safety-strip"><div className="safety-icon"><Shield size={15}/></div><div><b>Mosaic Guard · {auth.guardConfigured ? "configured" : "not configured"}</b><span>{auth.guardConfigured ? "Input and output checks are required for text generation" : "Configure the LiteLLM guard model before generating"}</span></div><span className={`guard-status ${auth.guardConfigured ? "" : "demo-status"}`}>{auth.guardConfigured ? "READY" : "SETUP"}</span></div>
           </div>
         </section>

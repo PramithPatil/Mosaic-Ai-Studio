@@ -21,18 +21,29 @@ export async function POST(request: NextRequest) {
   if (modality === "image" && !process.env.LITELLM_IMAGE_GUARD_MODEL) return NextResponse.json({ error: "Image output safety is not configured. Add a vision-capable safety model alias before generating images." }, { status: 503 });
 
   const started = Date.now();
+  let phase = "input_safety";
   try {
     if (await moderateText(prompt, "input") !== "safe") return NextResponse.json({ error: "This prompt was blocked by the input safety check." }, { status: 422 });
+    phase = "comfy_generation";
     const generated = await runComfyWorkflow(modality, prompt);
+    phase = "image_safety";
     if (modality === "image" && await moderateImage(generated.bytes, generated.mimeType) !== "safe") {
       return NextResponse.json({ error: "The generated image was withheld by the image safety check." }, { status: 422 });
     }
+    phase = "media_storage";
     const saved = await saveMedia(generated.bytes, generated.mimeType);
     const latencyMs = Date.now() - started;
+    phase = "activity_storage";
     await recordGeneration({ title: prompt.replace(/\s+/g, " ").slice(0, 60), modality, model: `ComfyUI · ${modality}`, status: "complete", costUsd: null, latencyMs, usage: null, userEmail: session.email });
     return NextResponse.json({ ...saved, latencyMs, safety: "passed" });
   } catch (error) {
     const reason = error instanceof Error ? error.message : "unknown_error";
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const diagnostic = reason.startsWith("moderation_provider_error_") ? `safety_provider_http_${reason.slice("moderation_provider_error_".length)}`
+      : errorName === "AbortError" || errorName === "TimeoutError" ? "timeout"
+      : reason === "fetch failed" ? "network_error"
+      : /^[a-z0-9_]+$/i.test(reason) ? reason : "unexpected_error";
+    console.error(`[media-render] ${phase} failed: ${diagnostic}`);
     const status = reason.endsWith("not_configured") || reason.endsWith("unavailable") ? 503
       : reason.endsWith("node_invalid") ? 400
       : reason.includes("blocked") ? 422
@@ -61,7 +72,7 @@ export async function POST(request: NextRequest) {
     };
     const errorMessage = reason === "unsafe" ? "This prompt was blocked by the input safety check."
       : reason === "image_blocked" ? "The generated image was withheld by the image safety check."
-      : messages[reason] ?? "The media service could not complete this request.";
-    return NextResponse.json({ error: errorMessage }, { status });
+      : messages[reason] ?? `The media request failed during ${phase} (${diagnostic}).`;
+    return NextResponse.json({ error: errorMessage, diagnostic }, { status });
   }
 }
